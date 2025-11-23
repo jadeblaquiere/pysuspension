@@ -1,44 +1,52 @@
 import numpy as np
 from typing import List, Tuple, Union, Dict
+from units import to_mm, from_mm
 
 
 class ChassisCorner:
     """
     Represents a corner of the chassis with multiple attachment points.
     All attachment points in a corner are linked to a single suspension knuckle.
+
+    All positions are stored internally in millimeters (mm).
     """
-    
+
     def __init__(self, name: str):
         """
         Initialize a chassis corner.
-        
+
         Args:
             name: Identifier for the corner (e.g., "front_left", "rear_right")
         """
         self.name = name
         self.attachment_points: List[Tuple[str, np.ndarray]] = []
-    
-    def add_attachment_point(self, name: str, position: Union[np.ndarray, Tuple[float, float, float]]) -> None:
+
+    def add_attachment_point(self, name: str, position: Union[np.ndarray, Tuple[float, float, float]],
+                            unit: str = 'mm') -> None:
         """
         Add an attachment point to this corner.
-        
+
         Args:
             name: Identifier for the attachment point
             position: 3D position [x, y, z]
+            unit: Unit of input position (default: 'mm')
         """
-        pos = np.array(position, dtype=float)
+        pos = to_mm(np.array(position, dtype=float), unit)
         if pos.shape != (3,):
             raise ValueError("Position must be a 3-element array [x, y, z]")
         self.attachment_points.append((name, pos))
-    
-    def get_attachment_positions(self) -> List[np.ndarray]:
+
+    def get_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
         """
         Get all attachment point positions for this corner.
-        
+
+        Args:
+            unit: Unit for output (default: 'mm')
+
         Returns:
-            List of attachment positions
+            List of attachment positions in specified unit
         """
-        return [pos.copy() for _, pos in self.attachment_points]
+        return [from_mm(pos.copy(), unit) for _, pos in self.attachment_points]
     
     def get_attachment_names(self) -> List[str]:
         """
@@ -57,12 +65,14 @@ class Chassis:
     """
     Represents a vehicle chassis with multiple corners.
     The chassis behaves as a rigid body with all corners moving together.
+
+    All positions are stored internally in millimeters (mm).
     """
-    
+
     def __init__(self, name: str = "chassis"):
         """
         Initialize a chassis.
-        
+
         Args:
             name: Identifier for the chassis
         """
@@ -123,55 +133,60 @@ class Chassis:
         else:
             self.centroid = np.zeros(3)
     
-    def get_all_attachment_positions(self) -> List[np.ndarray]:
+    def get_all_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
         """
         Get all attachment point positions from all corners.
-        
+
+        Args:
+            unit: Unit for output (default: 'mm')
+
         Returns:
-            List of all attachment positions (ordered by corner, then by attachment within corner)
+            List of all attachment positions in specified unit (ordered by corner, then by attachment within corner)
         """
         positions = []
-        
+
         for corner_name in sorted(self.corners.keys()):
             corner = self.corners[corner_name]
-            positions.extend(corner.get_attachment_positions())
-        
+            positions.extend(corner.get_attachment_positions(unit=unit))
+
         return positions
-    
-    def get_corner_attachment_positions(self, corner_name: str) -> List[np.ndarray]:
+
+    def get_corner_attachment_positions(self, corner_name: str, unit: str = 'mm') -> List[np.ndarray]:
         """
         Get attachment positions for a specific corner.
-        
+
         Args:
             corner_name: Name of the corner
-            
+            unit: Unit for output (default: 'mm')
+
         Returns:
-            List of attachment positions for the specified corner
+            List of attachment positions for the specified corner in specified unit
         """
-        return self.get_corner(corner_name).get_attachment_positions()
+        return self.get_corner(corner_name).get_attachment_positions(unit=unit)
     
-    def fit_to_attachment_targets(self, target_positions: List[np.ndarray]) -> float:
+    def fit_to_attachment_targets(self, target_positions: List[np.ndarray], unit: str = 'mm') -> float:
         """
         Fit the chassis to target attachment positions using rigid body transformation.
         Updates all corner attachment positions based on the optimal rigid body fit.
-        
+
         Args:
             target_positions: List of target positions in same order as get_all_attachment_positions()
-            
+            unit: Unit of input target positions (default: 'mm')
+
         Returns:
-            RMS error of the fit
+            RMS error of the fit (in mm)
         """
-        current_positions = self.get_all_attachment_positions()
-        
+        current_positions = self.get_all_attachment_positions(unit='mm')
+
         if len(target_positions) != len(current_positions):
             raise ValueError(f"Expected {len(current_positions)} target positions, got {len(target_positions)}")
-        
+
         if len(current_positions) < 3:
             raise ValueError("Need at least 3 attachment points for rigid body fit")
-        
-        # Convert to numpy arrays
+
+        # Convert to numpy arrays and to mm
         current_points = np.array(current_positions)
-        target_points = np.array([np.array(p) for p in target_positions])
+        target_points = np.array([to_mm(np.array(p, dtype=float), unit) for p in target_positions])
         
         # Compute centroids
         centroid_current = np.mean(current_points, axis=0)
@@ -217,22 +232,23 @@ class Chassis:
         
         return rms_error
     
-    def translate(self, translation: Union[np.ndarray, Tuple[float, float, float]]) -> None:
+    def translate(self, translation: Union[np.ndarray, Tuple[float, float, float]], unit: str = 'mm') -> None:
         """
         Translate the entire chassis by a given vector.
-        
+
         Args:
             translation: Translation vector [dx, dy, dz]
+            unit: Unit of input translation (default: 'mm')
         """
-        t = np.array(translation, dtype=float)
-        
+        t = to_mm(np.array(translation, dtype=float), unit)
+
         for corner in self.corners.values():
             updated_attachments = []
             for name, pos in corner.attachment_points:
                 new_pos = pos + t
                 updated_attachments.append((name, new_pos))
             corner.attachment_points = updated_attachments
-        
+
         self._update_centroid()
     
     def rotate_about_centroid(self, rotation_matrix: np.ndarray) -> None:
@@ -257,82 +273,90 @@ class Chassis:
     
     def __repr__(self) -> str:
         total_attachments = sum(len(c.attachment_points) for c in self.corners.values())
+        centroid_str = f"{self.centroid} mm" if self.centroid is not None else "None"
         return (f"Chassis('{self.name}',\n"
                 f"  corners={len(self.corners)},\n"
                 f"  total_attachments={total_attachments},\n"
-                f"  centroid={self.centroid}\n"
+                f"  centroid={centroid_str}\n"
                 f")")
 
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("CHASSIS TEST")
+    print("CHASSIS TEST (with unit support)")
     print("=" * 60)
-    
-    # Create a chassis with four corners
+
+    # Create a chassis with four corners (using meters as input, stored as mm internally)
     chassis = Chassis(name="test_chassis")
-    
+
     print("\n--- Creating four corners ---")
-    
+
     # Front left corner
     fl_corner = chassis.create_corner("front_left")
-    fl_corner.add_attachment_point("upper_front_mount", [1.4, 0.5, 0.6])
-    fl_corner.add_attachment_point("upper_rear_mount", [1.3, 0.5, 0.58])
-    fl_corner.add_attachment_point("lower_front_mount", [1.45, 0.45, 0.35])
-    fl_corner.add_attachment_point("lower_rear_mount", [1.35, 0.45, 0.33])
-    
+    fl_corner.add_attachment_point("upper_front_mount", [1.4, 0.5, 0.6], unit='m')
+    fl_corner.add_attachment_point("upper_rear_mount", [1.3, 0.5, 0.58], unit='m')
+    fl_corner.add_attachment_point("lower_front_mount", [1.45, 0.45, 0.35], unit='m')
+    fl_corner.add_attachment_point("lower_rear_mount", [1.35, 0.45, 0.33], unit='m')
+
     # Front right corner
     fr_corner = chassis.create_corner("front_right")
-    fr_corner.add_attachment_point("upper_front_mount", [1.4, -0.5, 0.6])
-    fr_corner.add_attachment_point("upper_rear_mount", [1.3, -0.5, 0.58])
-    fr_corner.add_attachment_point("lower_front_mount", [1.45, -0.45, 0.35])
-    fr_corner.add_attachment_point("lower_rear_mount", [1.35, -0.45, 0.33])
-    
+    fr_corner.add_attachment_point("upper_front_mount", [1.4, -0.5, 0.6], unit='m')
+    fr_corner.add_attachment_point("upper_rear_mount", [1.3, -0.5, 0.58], unit='m')
+    fr_corner.add_attachment_point("lower_front_mount", [1.45, -0.45, 0.35], unit='m')
+    fr_corner.add_attachment_point("lower_rear_mount", [1.35, -0.45, 0.33], unit='m')
+
     # Rear left corner
     rl_corner = chassis.create_corner("rear_left")
-    rl_corner.add_attachment_point("upper_front_mount", [-1.3, 0.5, 0.6])
-    rl_corner.add_attachment_point("upper_rear_mount", [-1.4, 0.5, 0.58])
-    rl_corner.add_attachment_point("lower_front_mount", [-1.25, 0.45, 0.35])
-    rl_corner.add_attachment_point("lower_rear_mount", [-1.35, 0.45, 0.33])
-    
+    rl_corner.add_attachment_point("upper_front_mount", [-1.3, 0.5, 0.6], unit='m')
+    rl_corner.add_attachment_point("upper_rear_mount", [-1.4, 0.5, 0.58], unit='m')
+    rl_corner.add_attachment_point("lower_front_mount", [-1.25, 0.45, 0.35], unit='m')
+    rl_corner.add_attachment_point("lower_rear_mount", [-1.35, 0.45, 0.33], unit='m')
+
     # Rear right corner
     rr_corner = chassis.create_corner("rear_right")
-    rr_corner.add_attachment_point("upper_front_mount", [-1.3, -0.5, 0.6])
-    rr_corner.add_attachment_point("upper_rear_mount", [-1.4, -0.5, 0.58])
-    rr_corner.add_attachment_point("lower_front_mount", [-1.25, -0.45, 0.35])
-    rr_corner.add_attachment_point("lower_rear_mount", [-1.35, -0.45, 0.33])
-    
+    rr_corner.add_attachment_point("upper_front_mount", [-1.3, -0.5, 0.6], unit='m')
+    rr_corner.add_attachment_point("upper_rear_mount", [-1.4, -0.5, 0.58], unit='m')
+    rr_corner.add_attachment_point("lower_front_mount", [-1.25, -0.45, 0.35], unit='m')
+    rr_corner.add_attachment_point("lower_rear_mount", [-1.35, -0.45, 0.33], unit='m')
+
     print(f"\n{chassis}")
-    
+
     print("\nCorners:")
     for corner_name, corner in chassis.corners.items():
         print(f"  {corner}")
-    
+
     # Test getting all attachment positions
     print("\n--- Testing get_all_attachment_positions ---")
-    all_positions = chassis.get_all_attachment_positions()
-    print(f"Total attachment points: {len(all_positions)}")
-    print(f"First attachment: {all_positions[0]}")
-    print(f"Last attachment: {all_positions[-1]}")
-    
+    all_positions_mm = chassis.get_all_attachment_positions(unit='mm')
+    all_positions_m = chassis.get_all_attachment_positions(unit='m')
+    print(f"Total attachment points: {len(all_positions_mm)}")
+    print(f"First attachment (mm): {all_positions_mm[0]}")
+    print(f"First attachment (m): {all_positions_m[0]}")
+    print(f"Last attachment (mm): {all_positions_mm[-1]}")
+    print(f"Last attachment (m): {all_positions_m[-1]}")
+
     # Test getting corner-specific positions
     print("\n--- Testing get_corner_attachment_positions ---")
-    fl_positions = chassis.get_corner_attachment_positions("front_left")
-    print(f"Front left corner has {len(fl_positions)} attachments")
-    for i, pos in enumerate(fl_positions):
-        print(f"  {fl_corner.get_attachment_names()[i]}: {pos}")
-    
+    fl_positions_mm = chassis.get_corner_attachment_positions("front_left", unit='mm')
+    fl_positions_m = chassis.get_corner_attachment_positions("front_left", unit='m')
+    print(f"Front left corner has {len(fl_positions_mm)} attachments")
+    for i, (pos_mm, pos_m) in enumerate(zip(fl_positions_mm, fl_positions_m)):
+        print(f"  {fl_corner.get_attachment_names()[i]} (mm): {pos_mm}")
+        print(f"  {fl_corner.get_attachment_names()[i]} (m): {pos_m}")
+
     # Test translation
     print("\n--- Testing translation ---")
     original_centroid = chassis.centroid.copy()
-    print(f"Original centroid: {original_centroid}")
-    
-    chassis.translate([0.1, 0.0, 0.05])
-    
-    print(f"After translation [0.1, 0, 0.05]:")
-    print(f"New centroid: {chassis.centroid}")
-    print(f"Centroid change: {chassis.centroid - original_centroid}")
-    
+    print(f"Original centroid (mm): {original_centroid}")
+    print(f"Original centroid (m): {from_mm(original_centroid, 'm')}")
+
+    chassis.translate([0.1, 0.0, 0.05], unit='m')  # Translate 100mm x, 0 y, 50mm z
+
+    print(f"After translation [0.1m, 0, 0.05m]:")
+    print(f"New centroid (mm): {chassis.centroid}")
+    print(f"New centroid (m): {from_mm(chassis.centroid, 'm')}")
+    print(f"Centroid change (mm): {chassis.centroid - original_centroid}")
+
     # Test rotation
     print("\n--- Testing rotation about centroid ---")
     angle = np.radians(5)
@@ -341,21 +365,22 @@ if __name__ == "__main__":
         [np.sin(angle), np.cos(angle), 0],
         [0, 0, 1]
     ])
-    
-    before_rotation = chassis.get_corner_attachment_positions("front_left")[0].copy()
+
+    before_rotation = chassis.get_corner_attachment_positions("front_left", unit='mm')[0].copy()
     chassis.rotate_about_centroid(R_z)
-    after_rotation = chassis.get_corner_attachment_positions("front_left")[0].copy()
-    
-    print(f"Front left first attachment before rotation: {before_rotation}")
-    print(f"Front left first attachment after 5° rotation: {after_rotation}")
-    print(f"Position change: {np.linalg.norm(after_rotation - before_rotation):.6f} m")
-    
+    after_rotation = chassis.get_corner_attachment_positions("front_left", unit='mm')[0].copy()
+
+    print(f"Front left first attachment before rotation (mm): {before_rotation}")
+    print(f"Front left first attachment after 5° rotation (mm): {after_rotation}")
+    print(f"Position change (mm): {np.linalg.norm(after_rotation - before_rotation):.3f}")
+    print(f"Position change (m): {from_mm(np.linalg.norm(after_rotation - before_rotation), 'm'):.6f}")
+
     # Test fitting to targets
     print("\n--- Testing fit_to_attachment_targets ---")
-    
+
     # Create target positions (simulate chassis pitch and heave)
-    original_positions = chassis.get_all_attachment_positions()
-    
+    original_positions = chassis.get_all_attachment_positions(unit='mm')
+
     # Simulate: 20mm heave up, 2° pitch (nose down)
     pitch_angle = np.radians(-2)
     R_pitch = np.array([
@@ -363,23 +388,27 @@ if __name__ == "__main__":
         [0, 1, 0],
         [-np.sin(pitch_angle), 0, np.cos(pitch_angle)]
     ])
-    
+
     centroid = chassis.centroid.copy()
     target_positions = []
     for pos in original_positions:
         # Apply pitch about centroid
         rotated = centroid + R_pitch @ (pos - centroid)
-        # Apply heave
-        target = rotated + np.array([0, 0, 0.02])
+        # Apply heave (20mm up)
+        target = rotated + np.array([0, 0, 20.0])
         target_positions.append(target)
-    
-    print(f"Original centroid: {centroid}")
-    
-    rms_error = chassis.fit_to_attachment_targets(target_positions)
-    
+
+    print(f"Original centroid (mm): {centroid}")
+    print(f"Original centroid (m): {from_mm(centroid, 'm')}")
+
+    rms_error = chassis.fit_to_attachment_targets(target_positions, unit='mm')
+
     print(f"\nAfter fitting to targets:")
-    print(f"New centroid: {chassis.centroid}")
-    print(f"RMS error: {rms_error:.9f} m")
-    print(f"Centroid vertical change: {(chassis.centroid - centroid)[2]:.6f} m")
-    
+    print(f"New centroid (mm): {chassis.centroid}")
+    print(f"New centroid (m): {from_mm(chassis.centroid, 'm')}")
+    print(f"RMS error (mm): {rms_error:.6f}")
+    print(f"RMS error (m): {from_mm(rms_error, 'm'):.9f}")
+    print(f"Centroid vertical change (mm): {(chassis.centroid - centroid)[2]:.3f}")
+    print(f"Centroid vertical change (m): {from_mm((chassis.centroid - centroid)[2], 'm'):.6f}")
+
     print("\n✓ All tests completed successfully!")

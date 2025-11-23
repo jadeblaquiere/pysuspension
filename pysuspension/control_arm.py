@@ -1,25 +1,28 @@
 import numpy as np
 from typing import List, Tuple, Union
 from suspension_link import SuspensionLink
+from units import to_mm, from_mm
 
 
 class ControlArm:
     """
     Represents a control arm consisting of multiple suspension links and attachment points
     that move together as a rigid body.
+
+    All positions are stored internally in millimeters (mm).
     """
-    
+
     def __init__(self, name: str = "control_arm"):
         """
         Initialize a control arm.
-        
+
         Args:
             name: Identifier for the control arm
         """
         self.name = name
         self.links: List[SuspensionLink] = []
         self.additional_attachments: List[Tuple[str, np.ndarray]] = []
-        
+
         # Rigid body transformation (identity initially)
         self.centroid = None
         self.rotation_matrix = np.eye(3)
@@ -34,15 +37,17 @@ class ControlArm:
         self.links.append(link)
         self._update_centroid()
     
-    def add_attachment_point(self, name: str, position: Union[np.ndarray, Tuple[float, float, float]]) -> None:
+    def add_attachment_point(self, name: str, position: Union[np.ndarray, Tuple[float, float, float]],
+                            unit: str = 'mm') -> None:
         """
         Add an additional attachment point to the control arm.
-        
+
         Args:
             name: Identifier for the attachment point
             position: 3D position [x, y, z]
+            unit: Unit of input position (default: 'mm')
         """
-        pos = np.array(position, dtype=float)
+        pos = to_mm(np.array(position, dtype=float), unit)
         if pos.shape != (3,):
             raise ValueError("Position must be a 3-element array [x, y, z]")
         self.additional_attachments.append((name, pos))
@@ -66,68 +71,73 @@ class ControlArm:
         else:
             self.centroid = np.zeros(3)
     
-    def get_all_attachment_positions(self) -> List[np.ndarray]:
+    def get_all_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
         """
         Get all unique attachment point positions.
         Link endpoints and additional attachments are included, with duplicates removed.
-        
+
+        Args:
+            unit: Unit for output (default: 'mm')
+
         Returns:
-            List of unique attachment positions
+            List of unique attachment positions in specified unit
         """
         positions = []
-        position_set = []  # For duplicate checking
-        
-        # Add link endpoints
+        position_set = []  # For duplicate checking (in mm)
+
+        # Add link endpoints (already in mm internally)
         for link in self.links:
-            for endpoint in link.get_endpoints():
+            for endpoint in link.get_endpoints(unit='mm'):
                 # Check if this position is already in the list (within tolerance)
                 is_duplicate = False
                 for existing_pos in position_set:
-                    if np.linalg.norm(endpoint - existing_pos) < 1e-9:
+                    if np.linalg.norm(endpoint - existing_pos) < 1e-6:  # Adjusted tolerance for mm
                         is_duplicate = True
                         break
-                
+
                 if not is_duplicate:
                     positions.append(endpoint.copy())
                     position_set.append(endpoint.copy())
-        
-        # Add additional attachment points
+
+        # Add additional attachment points (already in mm)
         for _, pos in self.additional_attachments:
             # Check for duplicates
             is_duplicate = False
             for existing_pos in position_set:
-                if np.linalg.norm(pos - existing_pos) < 1e-9:
+                if np.linalg.norm(pos - existing_pos) < 1e-6:  # Adjusted tolerance for mm
                     is_duplicate = True
                     break
-            
+
             if not is_duplicate:
                 positions.append(pos.copy())
                 position_set.append(pos.copy())
-        
-        return positions
+
+        # Convert all positions to requested unit
+        return [from_mm(pos, unit) for pos in positions]
     
-    def fit_to_attachment_targets(self, target_positions: List[np.ndarray]) -> float:
+    def fit_to_attachment_targets(self, target_positions: List[np.ndarray], unit: str = 'mm') -> float:
         """
         Fit the control arm to target attachment positions using rigid body transformation.
         Updates all link positions based on the optimal rigid body fit.
-        
+
         Args:
             target_positions: List of target positions in same order as get_all_attachment_positions()
-            
+            unit: Unit of input target positions (default: 'mm')
+
         Returns:
-            RMS error of the fit
+            RMS error of the fit (in mm)
         """
-        current_positions = self.get_all_attachment_positions()
-        
+        current_positions = self.get_all_attachment_positions(unit='mm')
+
         if len(target_positions) != len(current_positions):
             raise ValueError(f"Expected {len(current_positions)} target positions, got {len(target_positions)}")
-        
+
         if len(current_positions) < 3:
             raise ValueError("Need at least 3 attachment points for rigid body fit")
-        
-        # Convert to numpy arrays
+
+        # Convert to numpy arrays and to mm
         current_points = np.array(current_positions)
-        target_points = np.array([np.array(p) for p in target_positions])
+        target_points = np.array([to_mm(np.array(p, dtype=float), unit) for p in target_positions])
         
         # Compute centroids
         centroid_current = np.mean(current_points, axis=0)
@@ -181,66 +191,81 @@ class ControlArm:
         return rms_error
     
     def __repr__(self) -> str:
+        centroid_str = f"{self.centroid} mm" if self.centroid is not None else "None"
         return (f"ControlArm('{self.name}',\n"
                 f"  links={len(self.links)},\n"
                 f"  additional_attachments={len(self.additional_attachments)},\n"
-                f"  total_unique_attachments={len(self.get_all_attachment_positions())}\n"
+                f"  total_unique_attachments={len(self.get_all_attachment_positions())},\n"
+                f"  centroid={centroid_str}\n"
                 f")")
 
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("CONTROL ARM TEST")
+    print("CONTROL ARM TEST (with unit support)")
     print("=" * 60)
-    
-    # Create a control arm with multiple links
+
+    # Create a control arm with multiple links (using meters as input, stored as mm internally)
     control_arm = ControlArm(name="test_control_arm")
-    
+
     # Add two links (forming a triangulated control arm)
     link1 = SuspensionLink(
         endpoint1=[1.3, 0.4, 0.55],   # Front chassis mount
         endpoint2=[1.5, 0.75, 0.6],   # Ball joint
-        name="front_link"
+        name="front_link",
+        unit='m'  # Input in meters
     )
-    
+
     link2 = SuspensionLink(
         endpoint1=[1.2, 0.4, 0.55],   # Rear chassis mount
         endpoint2=[1.5, 0.75, 0.6],   # Ball joint (shared with link1)
-        name="rear_link"
+        name="rear_link",
+        unit='m'  # Input in meters
     )
-    
+
     control_arm.add_link(link1)
     control_arm.add_link(link2)
-    
+
     # Add an additional attachment point (e.g., for a sway bar link)
-    control_arm.add_attachment_point("sway_bar_mount", [1.25, 0.5, 0.5])
-    
+    control_arm.add_attachment_point("sway_bar_mount", [1.25, 0.5, 0.5], unit='m')
+
     print(f"\n{control_arm}")
-    
-    print("\nAll attachment positions:")
-    all_positions = control_arm.get_all_attachment_positions()
+
+    print("\nAll attachment positions (mm):")
+    all_positions = control_arm.get_all_attachment_positions(unit='mm')
     for i, pos in enumerate(all_positions):
         print(f"  Point {i}: {pos}")
-    
+
+    print("\nAll attachment positions (m):")
+    all_positions_m = control_arm.get_all_attachment_positions(unit='m')
+    for i, pos in enumerate(all_positions_m):
+        print(f"  Point {i}: {pos}")
+
     print(f"\nNote: Ball joint is shared between links, so only counted once")
     print(f"Total unique attachments: {len(all_positions)}")
-    
+
     # Test fitting control arm to new targets
     print("\n--- Testing control arm fit to targets ---")
-    
-    # Create target positions (e.g., suspension compressed and rotated)
-    original_positions = control_arm.get_all_attachment_positions()
-    # Simulate movement: translate and add some variation
+
+    # Create target positions in meters (e.g., suspension compressed and rotated)
+    original_positions = control_arm.get_all_attachment_positions(unit='m')
+    # Simulate movement: translate by 20mm x, -10mm y, -40mm z
     target_positions = [pos + np.array([0.02, -0.01, -0.04]) for pos in original_positions]
-    
-    print(f"Original centroid: {control_arm.centroid}")
-    
-    rms_error = control_arm.fit_to_attachment_targets(target_positions)
-    
+
+    print(f"Original centroid (mm): {control_arm.centroid}")
+    print(f"Original centroid (m): {from_mm(control_arm.centroid, 'm')}")
+
+    rms_error = control_arm.fit_to_attachment_targets(target_positions, unit='m')
+
     print(f"\nAfter fitting:")
-    print(f"New centroid: {control_arm.centroid}")
-    print(f"RMS error: {rms_error:.6f} m")
-    
+    print(f"New centroid (mm): {control_arm.centroid}")
+    print(f"New centroid (m): {from_mm(control_arm.centroid, 'm')}")
+    print(f"RMS error (mm): {rms_error:.3f}")
+    print(f"RMS error (m): {from_mm(rms_error, 'm'):.6f}")
+
     print(f"\nLink lengths maintained:")
     for link in control_arm.links:
-        print(f"  {link.name}: {link.get_length():.6f} m")
+        print(f"  {link.name} (mm): {link.get_length():.3f}")
+        print(f"  {link.name} (m): {link.get_length('m'):.6f}")
+
+    print("\n✓ All tests completed successfully!")

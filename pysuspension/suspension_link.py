@@ -1,42 +1,52 @@
 import numpy as np
 from typing import List, Tuple, Union
+from units import to_mm, from_mm
 
 
 class SuspensionLink:
     """
     Represents a rigid link between two attachment points in a suspension system.
     The link maintains a constant length once specified.
+
+    All positions are stored internally in millimeters (mm).
     """
-    
-    def __init__(self, 
+
+    def __init__(self,
                  endpoint1: Union[np.ndarray, Tuple[float, float, float]],
                  endpoint2: Union[np.ndarray, Tuple[float, float, float]],
-                 name: str = "link"):
+                 name: str = "link",
+                 unit: str = 'mm'):
         """
         Initialize a suspension link with two endpoints.
-        
+
         Args:
             endpoint1: 3D position of first endpoint [x, y, z]
             endpoint2: 3D position of second endpoint [x, y, z]
             name: Identifier for the link
+            unit: Unit of input positions (default: 'mm')
         """
         self.name = name
-        self.endpoint1 = np.array(endpoint1, dtype=float)
-        self.endpoint2 = np.array(endpoint2, dtype=float)
-        
+
+        # Convert inputs to mm (base unit) for internal storage
+        endpoint1_array = np.array(endpoint1, dtype=float)
+        endpoint2_array = np.array(endpoint2, dtype=float)
+
+        self.endpoint1 = to_mm(endpoint1_array, unit)
+        self.endpoint2 = to_mm(endpoint2_array, unit)
+
         if self.endpoint1.shape != (3,) or self.endpoint2.shape != (3,):
             raise ValueError("Endpoints must be 3-element arrays [x, y, z]")
-        
-        # Calculate and store the link length (constant)
+
+        # Calculate and store the link length (constant, in mm)
         self.length = np.linalg.norm(self.endpoint2 - self.endpoint1)
-        
-        if self.length < 1e-10:
+
+        if self.length < 1e-6:  # Adjusted tolerance for mm
             raise ValueError("Link endpoints are too close together (zero length)")
-        
+
         # Store initial relative positions for rigid body transformations
         self.endpoint1_relative = self.endpoint1.copy()
         self.endpoint2_relative = self.endpoint2.copy()
-        
+
         # Calculate link properties in local frame
         self._update_local_frame()
     
@@ -48,90 +58,141 @@ class SuspensionLink:
         # Link center
         self.center = (self.endpoint1 + self.endpoint2) / 2.0
     
-    def get_endpoint1(self) -> np.ndarray:
-        """Get the position of the first endpoint."""
-        return self.endpoint1.copy()
-    
-    def get_endpoint2(self) -> np.ndarray:
-        """Get the position of the second endpoint."""
-        return self.endpoint2.copy()
-    
-    def get_endpoints(self) -> List[np.ndarray]:
-        """Get both endpoint positions as a list."""
-        return [self.endpoint1.copy(), self.endpoint2.copy()]
-    
-    def get_center(self) -> np.ndarray:
-        """Get the center point of the link."""
-        return self.center.copy()
-    
+    def get_endpoint1(self, unit: str = 'mm') -> np.ndarray:
+        """
+        Get the position of the first endpoint.
+
+        Args:
+            unit: Unit for output (default: 'mm')
+
+        Returns:
+            Position in specified unit
+        """
+        return from_mm(self.endpoint1.copy(), unit)
+
+    def get_endpoint2(self, unit: str = 'mm') -> np.ndarray:
+        """
+        Get the position of the second endpoint.
+
+        Args:
+            unit: Unit for output (default: 'mm')
+
+        Returns:
+            Position in specified unit
+        """
+        return from_mm(self.endpoint2.copy(), unit)
+
+    def get_endpoints(self, unit: str = 'mm') -> List[np.ndarray]:
+        """
+        Get both endpoint positions as a list.
+
+        Args:
+            unit: Unit for output (default: 'mm')
+
+        Returns:
+            List of positions in specified unit
+        """
+        return [from_mm(self.endpoint1.copy(), unit), from_mm(self.endpoint2.copy(), unit)]
+
+    def get_center(self, unit: str = 'mm') -> np.ndarray:
+        """
+        Get the center point of the link.
+
+        Args:
+            unit: Unit for output (default: 'mm')
+
+        Returns:
+            Position in specified unit
+        """
+        return from_mm(self.center.copy(), unit)
+
     def get_axis(self) -> np.ndarray:
-        """Get the unit vector along the link axis (from endpoint1 to endpoint2)."""
+        """
+        Get the unit vector along the link axis (from endpoint1 to endpoint2).
+        Unit vectors are dimensionless.
+
+        Returns:
+            Unit vector (dimensionless)
+        """
         return self.axis.copy()
+
+    def get_length(self, unit: str = 'mm') -> float:
+        """
+        Get the length of the link (constant).
+
+        Args:
+            unit: Unit for output (default: 'mm')
+
+        Returns:
+            Length in specified unit
+        """
+        return from_mm(self.length, unit)
     
-    def get_length(self) -> float:
-        """Get the length of the link (constant)."""
-        return self.length
-    
-    def set_endpoints(self, 
+    def set_endpoints(self,
                      endpoint1: Union[np.ndarray, Tuple[float, float, float]],
-                     endpoint2: Union[np.ndarray, Tuple[float, float, float]]) -> None:
+                     endpoint2: Union[np.ndarray, Tuple[float, float, float]],
+                     unit: str = 'mm') -> None:
         """
         Set new endpoint positions. The distance between endpoints must match the link length.
-        
+
         Args:
             endpoint1: New position of first endpoint
             endpoint2: New position of second endpoint
-            
+            unit: Unit of input positions (default: 'mm')
+
         Raises:
             ValueError: If the new endpoints don't maintain the link length
         """
-        new_endpoint1 = np.array(endpoint1, dtype=float)
-        new_endpoint2 = np.array(endpoint2, dtype=float)
-        
+        new_endpoint1 = to_mm(np.array(endpoint1, dtype=float), unit)
+        new_endpoint2 = to_mm(np.array(endpoint2, dtype=float), unit)
+
         new_length = np.linalg.norm(new_endpoint2 - new_endpoint1)
-        
-        if abs(new_length - self.length) > 1e-6:
-            raise ValueError(f"New endpoints must maintain link length of {self.length:.6f}, "
-                           f"got {new_length:.6f}")
-        
+
+        if abs(new_length - self.length) > 1e-3:  # Adjusted tolerance for mm
+            raise ValueError(f"New endpoints must maintain link length of {self.length:.3f} mm, "
+                           f"got {new_length:.3f} mm")
+
         self.endpoint1 = new_endpoint1
         self.endpoint2 = new_endpoint2
         self._update_local_frame()
     
-    def set_endpoint1(self, position: Union[np.ndarray, Tuple[float, float, float]]) -> None:
+    def set_endpoint1(self, position: Union[np.ndarray, Tuple[float, float, float]], unit: str = 'mm') -> None:
         """
         Set the position of endpoint1, adjusting endpoint2 to maintain link length and direction.
-        
+
         Args:
             position: New position of first endpoint
+            unit: Unit of input position (default: 'mm')
         """
-        new_endpoint1 = np.array(position, dtype=float)
+        new_endpoint1 = to_mm(np.array(position, dtype=float), unit)
         # Keep the same axis direction, just translate
         self.endpoint2 = new_endpoint1 + self.axis * self.length
         self.endpoint1 = new_endpoint1
         self._update_local_frame()
-    
-    def set_endpoint2(self, position: Union[np.ndarray, Tuple[float, float, float]]) -> None:
+
+    def set_endpoint2(self, position: Union[np.ndarray, Tuple[float, float, float]], unit: str = 'mm') -> None:
         """
         Set the position of endpoint2, adjusting endpoint1 to maintain link length and direction.
-        
+
         Args:
             position: New position of second endpoint
+            unit: Unit of input position (default: 'mm')
         """
-        new_endpoint2 = np.array(position, dtype=float)
+        new_endpoint2 = to_mm(np.array(position, dtype=float), unit)
         # Keep the same axis direction, just translate
         self.endpoint1 = new_endpoint2 - self.axis * self.length
         self.endpoint2 = new_endpoint2
         self._update_local_frame()
-    
-    def translate(self, translation: Union[np.ndarray, Tuple[float, float, float]]) -> None:
+
+    def translate(self, translation: Union[np.ndarray, Tuple[float, float, float]], unit: str = 'mm') -> None:
         """
         Translate the link by a given vector, maintaining orientation.
-        
+
         Args:
             translation: Translation vector [dx, dy, dz]
+            unit: Unit of input translation (default: 'mm')
         """
-        t = np.array(translation, dtype=float)
+        t = to_mm(np.array(translation, dtype=float), unit)
         self.endpoint1 += t
         self.endpoint2 += t
         self.center += t
@@ -179,88 +240,96 @@ class SuspensionLink:
         self.endpoint1 = self.endpoint2 + rotation_matrix @ (self.endpoint1 - self.endpoint2)
         self._update_local_frame()
     
-    def fit_to_attachment_targets(self, target_endpoints: List[Union[np.ndarray, Tuple[float, float, float]]]) -> float:
+    def fit_to_attachment_targets(self, target_endpoints: List[Union[np.ndarray, Tuple[float, float, float]]],
+                                 unit: str = 'mm') -> float:
         """
         Fit the link to target endpoint positions while maintaining constant length.
         Updates the link position to minimize RMS error from targets.
-        
+
         The algorithm finds the best position by:
         1. Computing the center of the target endpoints
         2. Computing the direction from target1 to target2
         3. Placing the link at the target center with the link length maintained
-        
+
         Args:
             target_endpoints: List of two target positions [target_endpoint1, target_endpoint2]
-            
+            unit: Unit of input target positions (default: 'mm')
+
         Returns:
-            RMS error between actual endpoints and targets after fitting
+            RMS error between actual endpoints and targets after fitting (in mm)
         """
         if len(target_endpoints) != 2:
             raise ValueError("Expected list of 2 target endpoints")
-        
-        target1 = np.array(target_endpoints[0], dtype=float)
-        target2 = np.array(target_endpoints[1], dtype=float)
-        
+
+        target1 = to_mm(np.array(target_endpoints[0], dtype=float), unit)
+        target2 = to_mm(np.array(target_endpoints[1], dtype=float), unit)
+
         # Compute target center
         target_center = (target1 + target2) / 2.0
-        
+
         # Compute target direction and distance
         target_vector = target2 - target1
         target_distance = np.linalg.norm(target_vector)
-        
-        if target_distance < 1e-10:
+
+        if target_distance < 1e-6:  # Adjusted tolerance for mm
             raise ValueError("Target endpoints are too close together")
-        
+
         # Compute target axis (unit vector)
         target_axis = target_vector / target_distance
-        
+
         # Position the link at the target center with correct orientation
         # maintaining the fixed link length
         self.center = target_center.copy()
         self.axis = target_axis.copy()
         self.endpoint1 = self.center - (self.length / 2.0) * self.axis
         self.endpoint2 = self.center + (self.length / 2.0) * self.axis
-        
-        # Calculate RMS error
+
+        # Calculate RMS error (in mm)
         error1 = target1 - self.endpoint1
         error2 = target2 - self.endpoint2
         rms_error = np.sqrt((np.sum(error1**2) + np.sum(error2**2)) / 2.0)
-        
+
         return rms_error
     
     def __repr__(self) -> str:
         return (f"SuspensionLink('{self.name}',\n"
-                f"  endpoint1={self.endpoint1},\n"
-                f"  endpoint2={self.endpoint2},\n"
-                f"  length={self.length:.6f}\n"
+                f"  endpoint1={self.endpoint1} mm,\n"
+                f"  endpoint2={self.endpoint2} mm,\n"
+                f"  length={self.length:.3f} mm\n"
                 f")")
 
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("SUSPENSION LINK TEST")
+    print("SUSPENSION LINK TEST (with unit support)")
     print("=" * 60)
-    
-    # Create a suspension link
+
+    # Create a suspension link (using meters as input, stored as mm internally)
     link = SuspensionLink(
         endpoint1=[1.4, 0.5, 0.6],
         endpoint2=[1.5, 0.75, 0.6],
-        name="test_link"
+        name="test_link",
+        unit='m'  # Input in meters
     )
-    
+
     print(f"\n{link}")
-    print(f"Link center: {link.get_center()}")
+    print(f"Link center (mm): {link.get_center()}")
+    print(f"Link center (m): {link.get_center('m')}")
     print(f"Link axis: {link.get_axis()}")
-    print(f"Link length: {link.get_length():.6f} m")
-    
+    print(f"Link length (mm): {link.get_length():.3f}")
+    print(f"Link length (m): {link.get_length('m'):.6f}")
+    print(f"Link length (in): {link.get_length('in'):.6f}")
+
     # Test translation
     print("\n--- Testing translation ---")
-    original_ep1 = link.get_endpoint1()
-    print(f"Original endpoint1: {original_ep1}")
-    link.translate([0.1, 0.0, -0.05])
-    print(f"After translation [0.1, 0, -0.05]: {link.get_endpoint1()}")
-    print(f"Length maintained: {link.get_length():.6f} m")
-    
+    original_ep1 = link.get_endpoint1('m')
+    print(f"Original endpoint1 (m): {original_ep1}")
+    link.translate([100.0, 0.0, -50.0], unit='mm')  # Translate 100mm, 0mm, -50mm
+    print(f"After translation [100mm, 0, -50mm]:")
+    print(f"  Endpoint1 (m): {link.get_endpoint1('m')}")
+    print(f"  Endpoint1 (mm): {link.get_endpoint1()}")
+    print(f"Length maintained (mm): {link.get_length():.3f}")
+
     # Test rotation about center
     print("\n--- Testing rotation about center ---")
     angle = np.radians(15)
@@ -271,28 +340,30 @@ if __name__ == "__main__":
     ])
     link.rotate_about_center(R_z)
     print(f"After 15° rotation about center:")
-    print(f"  Endpoint1: {link.get_endpoint1()}")
-    print(f"  Endpoint2: {link.get_endpoint2()}")
-    print(f"  Length maintained: {link.get_length():.6f} m")
-    
+    print(f"  Endpoint1 (mm): {link.get_endpoint1()}")
+    print(f"  Endpoint2 (mm): {link.get_endpoint2()}")
+    print(f"  Length maintained (mm): {link.get_length():.3f}")
+
     # Test fitting to target positions
     print("\n--- Testing fit to attachment targets ---")
+    # Create targets in meters
     target_endpoints = [
-        np.array([1.45, 0.52, 0.58]),
-        np.array([1.52, 0.78, 0.62])
+        [1.45, 0.52, 0.58],
+        [1.52, 0.78, 0.62]
     ]
-    target_distance = np.linalg.norm(target_endpoints[1] - target_endpoints[0])
-    
-    print(f"Target endpoint1: {target_endpoints[0]}")
-    print(f"Target endpoint2: {target_endpoints[1]}")
-    print(f"Target distance: {target_distance:.6f} m")
-    print(f"Link length: {link.get_length():.6f} m")
-    
-    rms_error = link.fit_to_attachment_targets(target_endpoints)
-    
+
+    print(f"Target endpoint1 (m): {target_endpoints[0]}")
+    print(f"Target endpoint2 (m): {target_endpoints[1]}")
+
+    rms_error = link.fit_to_attachment_targets(target_endpoints, unit='m')
+
     print(f"\nAfter fitting:")
-    fitted_endpoints = link.get_endpoints()
-    print(f"  Endpoint1: {fitted_endpoints[0]}")
-    print(f"  Endpoint2: {fitted_endpoints[1]}")
-    print(f"  Length maintained: {link.get_length():.6f} m")
-    print(f"  RMS error: {rms_error:.6f} m")
+    fitted_endpoints = link.get_endpoints('m')
+    print(f"  Endpoint1 (m): {fitted_endpoints[0]}")
+    print(f"  Endpoint2 (m): {fitted_endpoints[1]}")
+    print(f"  Length maintained (mm): {link.get_length():.3f}")
+    print(f"  Length maintained (m): {link.get_length('m'):.6f}")
+    print(f"  RMS error (mm): {rms_error:.3f}")
+    print(f"  RMS error (m): {from_mm(rms_error, 'm'):.6f}")
+
+    print("\n✓ All tests completed successfully!")
