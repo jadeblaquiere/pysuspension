@@ -1,6 +1,7 @@
 import numpy as np
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Optional
 from suspension_link import SuspensionLink
+from attachment_point import AttachmentPoint
 from units import to_mm, from_mm, to_kg
 
 
@@ -24,7 +25,7 @@ class ControlArm:
         self.name = name
         self.mass = to_kg(mass, mass_unit)
         self.links: List[SuspensionLink] = []
-        self.additional_attachments: List[Tuple[str, np.ndarray]] = []
+        self.attachment_points: List[AttachmentPoint] = []  # All attachment points (not from links)
 
         # Rigid body transformation (identity initially)
         self.centroid = None
@@ -34,7 +35,7 @@ class ControlArm:
         # Store original state for reset (updated when links/attachments are added)
         self._original_state = {
             'link_endpoints': [],  # List of (endpoint1, endpoint2) tuples
-            'additional_attachments': [],  # List of (name, position) tuples
+            'attachment_points': [],  # List of AttachmentPoint copies
             'centroid': None,
             'center_of_mass': None,
             'rotation_matrix': self.rotation_matrix.copy(),
@@ -56,22 +57,30 @@ class ControlArm:
         self._update_centroid()
     
     def add_attachment_point(self, name: str, position: Union[np.ndarray, Tuple[float, float, float]],
-                            unit: str = 'mm') -> None:
+                            unit: str = 'mm') -> AttachmentPoint:
         """
-        Add an additional attachment point to the control arm.
+        Add an attachment point to the control arm.
 
         Args:
             name: Identifier for the attachment point
             position: 3D position [x, y, z]
             unit: Unit of input position (default: 'mm')
+
+        Returns:
+            The created AttachmentPoint object
         """
-        pos = to_mm(np.array(position, dtype=float), unit)
-        if pos.shape != (3,):
-            raise ValueError("Position must be a 3-element array [x, y, z]")
-        self.additional_attachments.append((name, pos))
-        # Store original attachment position
-        self._original_state['additional_attachments'].append((name, pos.copy()))
+        attachment = AttachmentPoint(
+            name=name,
+            position=position,
+            is_relative=False,  # Control arm attachment points are in absolute coordinates
+            unit=unit,
+            parent_component=self
+        )
+        self.attachment_points.append(attachment)
+        # Store original attachment point (copy without connections)
+        self._original_state['attachment_points'].append(attachment.copy())
         self._update_centroid()
+        return attachment
     
     def _update_centroid(self) -> None:
         """Update the centroid and center of mass of all attachment points.
@@ -83,9 +92,9 @@ class ControlArm:
             all_points.append(link.endpoint1)
             all_points.append(link.endpoint2)
 
-        # Collect additional attachment points
-        for _, pos in self.additional_attachments:
-            all_points.append(pos)
+        # Collect attachment point positions
+        for attachment in self.attachment_points:
+            all_points.append(attachment.position)
 
         if all_points:
             self.centroid = np.mean(all_points, axis=0)
@@ -128,8 +137,9 @@ class ControlArm:
                     positions.append(endpoint.copy())
                     position_set.append(endpoint.copy())
 
-        # Add additional attachment points (already in mm)
-        for _, pos in self.additional_attachments:
+        # Add attachment points (already in mm)
+        for attachment in self.attachment_points:
+            pos = attachment.position
             # Check for duplicates
             is_duplicate = False
             for existing_pos in position_set:
@@ -233,12 +243,10 @@ class ControlArm:
             link.endpoint2 = new_endpoint2
             link._update_local_frame()
 
-        # Update additional attachment points
-        updated_attachments = []
-        for name, pos in self.additional_attachments:
-            new_pos = R @ pos + t
-            updated_attachments.append((name, new_pos))
-        self.additional_attachments = updated_attachments
+        # Update attachment point positions
+        for attachment in self.attachment_points:
+            new_pos = R @ attachment.position + t
+            attachment.set_position(new_pos, unit='mm')
 
         # Update control arm transformation
         self.rotation_matrix = R
@@ -269,8 +277,11 @@ class ControlArm:
                 link.endpoint2 = endpoint2.copy()
                 link._update_local_frame()
 
-        # Restore additional attachments
-        self.additional_attachments = [(name, pos.copy()) for name, pos in self._original_state['additional_attachments']]
+        # Restore attachment point positions from original state
+        for i, attachment in enumerate(self.attachment_points):
+            if i < len(self._original_state['attachment_points']):
+                original = self._original_state['attachment_points'][i]
+                attachment.set_position(original.position, unit='mm')
 
         # Restore transformation
         self.rotation_matrix = self._original_state['rotation_matrix'].copy()
@@ -283,6 +294,30 @@ class ControlArm:
 
         # Unfreeze original state to allow subsequent transformations
         self._original_state_frozen = False
+
+    def get_attachment_point(self, name: str) -> Optional[AttachmentPoint]:
+        """
+        Get an attachment point by name.
+
+        Args:
+            name: Name of the attachment point
+
+        Returns:
+            AttachmentPoint object if found, None otherwise
+        """
+        for attachment in self.attachment_points:
+            if attachment.name == name:
+                return attachment
+        return None
+
+    def get_all_attachment_points(self) -> List[AttachmentPoint]:
+        """
+        Get all attachment point objects.
+
+        Returns:
+            List of all AttachmentPoint objects
+        """
+        return self.attachment_points.copy()
 
     def __repr__(self) -> str:
         centroid_str = f"{self.centroid} mm" if self.centroid is not None else "None"

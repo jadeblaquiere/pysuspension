@@ -263,19 +263,15 @@ class Chassis:
 
         # Update all corner attachment points
         for corner in self.corners.values():
-            updated_attachments = []
-            for name, pos in corner.attachment_points:
-                new_pos = R @ pos + t
-                updated_attachments.append((name, new_pos))
-            corner.attachment_points = updated_attachments
+            for attachment in corner.attachment_points:
+                new_pos = R @ attachment.position + t
+                attachment.set_position(new_pos, unit='mm')
 
         # Update all axle attachment points
         for axle in self.axles.values():
-            updated_attachments = []
-            for name, pos in axle.additional_attachments:
-                new_pos = R @ pos + t
-                updated_attachments.append((name, new_pos))
-            axle.additional_attachments = updated_attachments
+            for attachment in axle.attachment_points:
+                new_pos = R @ attachment.position + t
+                attachment.set_position(new_pos, unit='mm')
 
         # Update chassis transformation
         self.rotation_matrix = R
@@ -308,19 +304,15 @@ class Chassis:
 
         # Translate all corner attachment points
         for corner in self.corners.values():
-            updated_attachments = []
-            for name, pos in corner.attachment_points:
-                new_pos = pos + t
-                updated_attachments.append((name, new_pos))
-            corner.attachment_points = updated_attachments
+            for attachment in corner.attachment_points:
+                new_pos = attachment.position + t
+                attachment.set_position(new_pos, unit='mm')
 
         # Translate all axle attachment points
         for axle in self.axles.values():
-            updated_attachments = []
-            for name, pos in axle.additional_attachments:
-                new_pos = pos + t
-                updated_attachments.append((name, new_pos))
-            axle.additional_attachments = updated_attachments
+            for attachment in axle.attachment_points:
+                new_pos = attachment.position + t
+                attachment.set_position(new_pos, unit='mm')
 
         self._update_centroid()
     
@@ -344,19 +336,15 @@ class Chassis:
 
         # Rotate all corner attachment points
         for corner in self.corners.values():
-            updated_attachments = []
-            for name, pos in corner.attachment_points:
-                new_pos = self.centroid + rotation_matrix @ (pos - self.centroid)
-                updated_attachments.append((name, new_pos))
-            corner.attachment_points = updated_attachments
+            for attachment in corner.attachment_points:
+                new_pos = self.centroid + rotation_matrix @ (attachment.position - self.centroid)
+                attachment.set_position(new_pos, unit='mm')
 
         # Rotate all axle attachment points
         for axle in self.axles.values():
-            updated_attachments = []
-            for name, pos in axle.additional_attachments:
-                new_pos = self.centroid + rotation_matrix @ (pos - self.centroid)
-                updated_attachments.append((name, new_pos))
-            axle.additional_attachments = updated_attachments
+            for attachment in axle.attachment_points:
+                new_pos = self.centroid + rotation_matrix @ (attachment.position - self.centroid)
+                attachment.set_position(new_pos, unit='mm')
 
         self.rotation_matrix = rotation_matrix @ self.rotation_matrix
         self._update_centroid()

@@ -1,5 +1,6 @@
 import numpy as np
-from typing import List, Tuple, Union, TYPE_CHECKING
+from typing import List, Tuple, Union, Optional, TYPE_CHECKING
+from attachment_point import AttachmentPoint
 from units import to_mm, from_mm
 
 if TYPE_CHECKING:
@@ -41,14 +42,13 @@ class ChassisAxle:
                 raise ValueError(f"Corner '{corner_name}' not found in chassis")
 
         # Additional attachment points (beyond corner attachments)
-        # Stored as (name, position) tuples in mm
-        self.additional_attachments: List[Tuple[str, np.ndarray]] = []
+        self.attachment_points: List[AttachmentPoint] = []
 
         # Store original state for reset
-        self._original_additional_attachments: List[Tuple[str, np.ndarray]] = []
+        self._original_attachment_points: List[AttachmentPoint] = []
 
     def add_attachment_point(self, name: str, position: Union[np.ndarray, Tuple[float, float, float]],
-                            unit: str = 'mm') -> None:
+                            unit: str = 'mm') -> AttachmentPoint:
         """
         Add an additional attachment point to this axle.
 
@@ -59,13 +59,21 @@ class ChassisAxle:
             name: Identifier for the attachment point
             position: 3D position [x, y, z]
             unit: Unit of input position (default: 'mm')
+
+        Returns:
+            The created AttachmentPoint object
         """
-        pos = to_mm(np.array(position, dtype=float), unit)
-        if pos.shape != (3,):
-            raise ValueError("Position must be a 3-element array [x, y, z]")
-        self.additional_attachments.append((name, pos))
-        # Store original position
-        self._original_additional_attachments.append((name, pos.copy()))
+        attachment = AttachmentPoint(
+            name=name,
+            position=position,
+            is_relative=False,  # Axle attachment points are in absolute coordinates
+            unit=unit,
+            parent_component=self
+        )
+        self.attachment_points.append(attachment)
+        # Store original attachment point (copy without connections)
+        self._original_attachment_points.append(attachment.copy())
+        return attachment
 
     def get_attachment_position(self, name: str, unit: str = 'mm') -> np.ndarray:
         """
@@ -81,11 +89,34 @@ class ChassisAxle:
         Raises:
             ValueError: If attachment point not found
         """
-        for attachment_name, pos in self.additional_attachments:
-            if attachment_name == name:
-                return from_mm(pos.copy(), unit)
+        attachment = self.get_attachment_point(name)
+        if attachment is None:
+            raise ValueError(f"Attachment point '{name}' not found in axle '{self.name}'")
+        return attachment.get_position(unit)
 
-        raise ValueError(f"Attachment point '{name}' not found in axle '{self.name}'")
+    def get_attachment_point(self, name: str) -> Optional[AttachmentPoint]:
+        """
+        Get an attachment point by name.
+
+        Args:
+            name: Name of the attachment point
+
+        Returns:
+            AttachmentPoint object if found, None otherwise
+        """
+        for attachment in self.attachment_points:
+            if attachment.name == name:
+                return attachment
+        return None
+
+    def get_all_attachment_points(self) -> List[AttachmentPoint]:
+        """
+        Get all attachment point objects.
+
+        Returns:
+            List of all AttachmentPoint objects
+        """
+        return self.attachment_points.copy()
 
     def get_all_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
         """
@@ -99,7 +130,7 @@ class ChassisAxle:
         Returns:
             List of attachment positions in specified unit
         """
-        return [from_mm(pos.copy(), unit) for _, pos in self.additional_attachments]
+        return [attachment.get_position(unit) for attachment in self.attachment_points]
 
     def get_corner_names(self) -> List[str]:
         """
@@ -133,12 +164,15 @@ class ChassisAxle:
         Note: This only resets the additional attachment points.
         Corner attachment points are managed by their respective corners.
         """
-        self.additional_attachments = [(name, pos.copy()) for name, pos in self._original_additional_attachments]
+        for i, attachment in enumerate(self.attachment_points):
+            if i < len(self._original_attachment_points):
+                original = self._original_attachment_points[i]
+                attachment.set_position(original.position, unit='mm')
 
     def __repr__(self) -> str:
         return (f"ChassisAxle('{self.name}',\n"
                 f"  corners={self.corner_names},\n"
-                f"  additional_attachments={len(self.additional_attachments)}\n"
+                f"  attachment_points={len(self.attachment_points)}\n"
                 f")")
 
 

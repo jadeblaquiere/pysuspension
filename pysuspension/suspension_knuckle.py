@@ -116,7 +116,7 @@ class SuspensionKnuckle:
         self.mounting_plane_center_relative = self.wheel_offset * self.tire_axis_relative
     
     def add_attachment_point(self, name: str, position: Tuple[float, float, float],
-                            relative: bool = True, unit: str = 'mm') -> None:
+                            relative: bool = True, unit: str = 'mm') -> AttachmentPoint:
         """
         Add an attachment point to the knuckle.
 
@@ -125,6 +125,9 @@ class SuspensionKnuckle:
             position: 3D position [x, y, z]
             relative: If True, position is relative to tire center; if False, absolute
             unit: Unit of input position (default: 'mm')
+
+        Returns:
+            The created AttachmentPoint object
         """
         pos_array = to_mm(np.array(position, dtype=float), unit)
 
@@ -132,8 +135,9 @@ class SuspensionKnuckle:
         if not relative:
             pos_array = pos_array - self.tire_center
 
-        attachment = AttachmentPoint(name, pos_array, is_relative=True, unit='mm')
+        attachment = AttachmentPoint(name, pos_array, is_relative=True, unit='mm', parent_component=self)
         self.attachment_points.append(attachment)
+        return attachment
     
     def get_attachment_position(self, name: str, absolute: bool = True, unit: str = 'mm') -> np.ndarray:
         """

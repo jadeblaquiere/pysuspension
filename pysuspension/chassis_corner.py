@@ -1,5 +1,6 @@
 import numpy as np
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Optional
+from attachment_point import AttachmentPoint
 from units import to_mm, from_mm
 
 
@@ -19,13 +20,13 @@ class ChassisCorner:
             name: Identifier for the corner (e.g., "front_left", "rear_right")
         """
         self.name = name
-        self.attachment_points: List[Tuple[str, np.ndarray]] = []
+        self.attachment_points: List[AttachmentPoint] = []
 
         # Store original state for reset
-        self._original_attachment_points: List[Tuple[str, np.ndarray]] = []
+        self._original_attachment_points: List[AttachmentPoint] = []
 
     def add_attachment_point(self, name: str, position: Union[np.ndarray, Tuple[float, float, float]],
-                            unit: str = 'mm') -> None:
+                            unit: str = 'mm') -> AttachmentPoint:
         """
         Add an attachment point to this corner.
 
@@ -33,13 +34,21 @@ class ChassisCorner:
             name: Identifier for the attachment point
             position: 3D position [x, y, z]
             unit: Unit of input position (default: 'mm')
+
+        Returns:
+            The created AttachmentPoint object
         """
-        pos = to_mm(np.array(position, dtype=float), unit)
-        if pos.shape != (3,):
-            raise ValueError("Position must be a 3-element array [x, y, z]")
-        self.attachment_points.append((name, pos))
-        # Store original position
-        self._original_attachment_points.append((name, pos.copy()))
+        attachment = AttachmentPoint(
+            name=name,
+            position=position,
+            is_relative=False,  # Chassis attachment points are in absolute coordinates
+            unit=unit,
+            parent_component=self
+        )
+        self.attachment_points.append(attachment)
+        # Store original attachment point (copy without connections)
+        self._original_attachment_points.append(attachment.copy())
+        return attachment
 
     def get_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
         """
@@ -51,7 +60,7 @@ class ChassisCorner:
         Returns:
             List of attachment positions in specified unit
         """
-        return [from_mm(pos.copy(), unit) for _, pos in self.attachment_points]
+        return [attachment.get_position(unit) for attachment in self.attachment_points]
 
     def get_attachment_names(self) -> List[str]:
         """
@@ -60,13 +69,40 @@ class ChassisCorner:
         Returns:
             List of attachment point names
         """
-        return [name for name, _ in self.attachment_points]
+        return [attachment.name for attachment in self.attachment_points]
+
+    def get_attachment_point(self, name: str) -> Optional[AttachmentPoint]:
+        """
+        Get an attachment point by name.
+
+        Args:
+            name: Name of the attachment point
+
+        Returns:
+            AttachmentPoint object if found, None otherwise
+        """
+        for attachment in self.attachment_points:
+            if attachment.name == name:
+                return attachment
+        return None
+
+    def get_all_attachment_points(self) -> List[AttachmentPoint]:
+        """
+        Get all attachment point objects.
+
+        Returns:
+            List of all AttachmentPoint objects
+        """
+        return self.attachment_points.copy()
 
     def reset_to_origin(self) -> None:
         """
         Reset the chassis corner attachment points to their originally defined positions.
         """
-        self.attachment_points = [(name, pos.copy()) for name, pos in self._original_attachment_points]
+        for i, attachment in enumerate(self.attachment_points):
+            if i < len(self._original_attachment_points):
+                original = self._original_attachment_points[i]
+                attachment.set_position(original.position, unit='mm')
 
     def __repr__(self) -> str:
         return f"ChassisCorner('{self.name}', attachments={len(self.attachment_points)})"
