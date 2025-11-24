@@ -21,6 +21,9 @@ class ChassisCorner:
         self.name = name
         self.attachment_points: List[Tuple[str, np.ndarray]] = []
 
+        # Store original state for reset
+        self._original_attachment_points: List[Tuple[str, np.ndarray]] = []
+
     def add_attachment_point(self, name: str, position: Union[np.ndarray, Tuple[float, float, float]],
                             unit: str = 'mm') -> None:
         """
@@ -35,6 +38,8 @@ class ChassisCorner:
         if pos.shape != (3,):
             raise ValueError("Position must be a 3-element array [x, y, z]")
         self.attachment_points.append((name, pos))
+        # Store original position
+        self._original_attachment_points.append((name, pos.copy()))
 
     def get_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
         """
@@ -56,6 +61,12 @@ class ChassisCorner:
             List of attachment point names
         """
         return [name for name, _ in self.attachment_points]
+
+    def reset_to_origin(self) -> None:
+        """
+        Reset the chassis corner attachment points to their originally defined positions.
+        """
+        self.attachment_points = [(name, pos.copy()) for name, pos in self._original_attachment_points]
 
     def __repr__(self) -> str:
         return f"ChassisCorner('{self.name}', attachments={len(self.attachment_points)})"

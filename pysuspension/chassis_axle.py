@@ -44,6 +44,9 @@ class ChassisAxle:
         # Stored as (name, position) tuples in mm
         self.additional_attachments: List[Tuple[str, np.ndarray]] = []
 
+        # Store original state for reset
+        self._original_additional_attachments: List[Tuple[str, np.ndarray]] = []
+
     def add_attachment_point(self, name: str, position: Union[np.ndarray, Tuple[float, float, float]],
                             unit: str = 'mm') -> None:
         """
@@ -61,6 +64,8 @@ class ChassisAxle:
         if pos.shape != (3,):
             raise ValueError("Position must be a 3-element array [x, y, z]")
         self.additional_attachments.append((name, pos))
+        # Store original position
+        self._original_additional_attachments.append((name, pos.copy()))
 
     def get_attachment_position(self, name: str, unit: str = 'mm') -> np.ndarray:
         """
@@ -120,6 +125,15 @@ class ChassisAxle:
             corner = self.chassis.get_corner(corner_name)
             result[corner_name] = corner.get_attachment_positions(unit=unit)
         return result
+
+    def reset_to_origin(self) -> None:
+        """
+        Reset the axle attachment points to their originally defined positions.
+
+        Note: This only resets the additional attachment points.
+        Corner attachment points are managed by their respective corners.
+        """
+        self.additional_attachments = [(name, pos.copy()) for name, pos in self._original_additional_attachments]
 
     def __repr__(self) -> str:
         return (f"ChassisAxle('{self.name}',\n"

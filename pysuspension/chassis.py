@@ -29,6 +29,16 @@ class Chassis:
         self.centroid = None
         self.center_of_mass = None
         self.rotation_matrix = np.eye(3)
+
+        # Store original state for reset
+        self._original_state = {
+            'centroid': None,
+            'center_of_mass': None,
+            'rotation_matrix': self.rotation_matrix.copy(),
+        }
+
+        # Flag to freeze original state after first transformation
+        self._original_state_frozen = False
     
     def add_corner(self, corner: ChassisCorner) -> None:
         """
@@ -132,6 +142,12 @@ class Chassis:
         else:
             self.centroid = np.zeros(3)
             self.center_of_mass = np.zeros(3)
+
+        # Update original state only if not frozen (i.e., during setup, before transformations)
+        # This ensures original state reflects all attachments added during setup
+        if not self._original_state_frozen:
+            self._original_state['centroid'] = self.centroid.copy() if self.centroid is not None else None
+            self._original_state['center_of_mass'] = self.center_of_mass.copy() if self.center_of_mass is not None else None
     
     def get_all_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
         """
@@ -201,6 +217,9 @@ class Chassis:
         Returns:
             RMS error of the fit (in mm)
         """
+        # Freeze original state on first transformation
+        self._original_state_frozen = True
+
         current_positions = self.get_all_attachment_positions(unit='mm')
 
         if len(target_positions) != len(current_positions):
@@ -278,6 +297,9 @@ class Chassis:
             translation: Translation vector [dx, dy, dz]
             unit: Unit of input translation (default: 'mm')
         """
+        # Freeze original state on first transformation
+        self._original_state_frozen = True
+
         t = to_mm(np.array(translation, dtype=float), unit)
 
         # Translate center of mass (if it exists)
@@ -310,6 +332,9 @@ class Chassis:
         Args:
             rotation_matrix: 3x3 rotation matrix
         """
+        # Freeze original state on first transformation
+        self._original_state_frozen = True
+
         if rotation_matrix.shape != (3, 3):
             raise ValueError("Rotation matrix must be 3x3")
 
@@ -335,7 +360,37 @@ class Chassis:
 
         self.rotation_matrix = rotation_matrix @ self.rotation_matrix
         self._update_centroid()
-    
+
+    def reset_to_origin(self) -> None:
+        """
+        Reset the chassis and all its components to their originally defined positions.
+
+        This resets:
+        - All corner attachment points
+        - All axle attachment points
+        - Chassis centroid and center of mass
+        - Chassis rotation matrix
+        """
+        # Reset all corners
+        for corner in self.corners.values():
+            corner.reset_to_origin()
+
+        # Reset all axles
+        for axle in self.axles.values():
+            axle.reset_to_origin()
+
+        # Reset chassis transformation
+        self.rotation_matrix = self._original_state['rotation_matrix'].copy()
+
+        # Reset centroid and center of mass
+        if self._original_state['centroid'] is not None:
+            self.centroid = self._original_state['centroid'].copy()
+        if self._original_state['center_of_mass'] is not None:
+            self.center_of_mass = self._original_state['center_of_mass'].copy()
+
+        # Unfreeze original state to allow subsequent transformations
+        self._original_state_frozen = False
+
     def __repr__(self) -> str:
         total_attachments = sum(len(c.attachment_points) for c in self.corners.values())
         centroid_str = f"{self.centroid} mm" if self.centroid is not None else "None"
