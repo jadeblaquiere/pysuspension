@@ -1,64 +1,8 @@
 import numpy as np
 from typing import List, Tuple, Union, Dict
 from units import to_mm, from_mm, to_kg
-
-
-class ChassisCorner:
-    """
-    Represents a corner of the chassis with multiple attachment points.
-    All attachment points in a corner are linked to a single suspension knuckle.
-
-    All positions are stored internally in millimeters (mm).
-    """
-
-    def __init__(self, name: str):
-        """
-        Initialize a chassis corner.
-
-        Args:
-            name: Identifier for the corner (e.g., "front_left", "rear_right")
-        """
-        self.name = name
-        self.attachment_points: List[Tuple[str, np.ndarray]] = []
-
-    def add_attachment_point(self, name: str, position: Union[np.ndarray, Tuple[float, float, float]],
-                            unit: str = 'mm') -> None:
-        """
-        Add an attachment point to this corner.
-
-        Args:
-            name: Identifier for the attachment point
-            position: 3D position [x, y, z]
-            unit: Unit of input position (default: 'mm')
-        """
-        pos = to_mm(np.array(position, dtype=float), unit)
-        if pos.shape != (3,):
-            raise ValueError("Position must be a 3-element array [x, y, z]")
-        self.attachment_points.append((name, pos))
-
-    def get_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
-        """
-        Get all attachment point positions for this corner.
-
-        Args:
-            unit: Unit for output (default: 'mm')
-
-        Returns:
-            List of attachment positions in specified unit
-        """
-        return [from_mm(pos.copy(), unit) for _, pos in self.attachment_points]
-    
-    def get_attachment_names(self) -> List[str]:
-        """
-        Get all attachment point names for this corner.
-        
-        Returns:
-            List of attachment point names
-        """
-        return [name for name, _ in self.attachment_points]
-    
-    def __repr__(self) -> str:
-        return f"ChassisCorner('{self.name}', attachments={len(self.attachment_points)})"
+from chassis_corner import ChassisCorner
+from chassis_axle import ChassisAxle
 
 
 class Chassis:
@@ -81,6 +25,7 @@ class Chassis:
         self.name = name
         self.mass = to_kg(mass, mass_unit)
         self.corners: Dict[str, ChassisCorner] = {}
+        self.axles: Dict[str, ChassisAxle] = {}
         self.centroid = None
         self.center_of_mass = None
         self.rotation_matrix = np.eye(3)
@@ -114,17 +59,65 @@ class Chassis:
     def get_corner(self, name: str) -> ChassisCorner:
         """
         Get a corner by name.
-        
+
         Args:
             name: Name of the corner
-            
+
         Returns:
             ChassisCorner object
         """
         if name not in self.corners:
             raise ValueError(f"Corner '{name}' not found")
         return self.corners[name]
-    
+
+    def add_axle(self, axle: ChassisAxle) -> None:
+        """
+        Add an axle to the chassis.
+
+        Args:
+            axle: ChassisAxle to add
+
+        Raises:
+            ValueError: If axle name already exists or axle belongs to different chassis
+        """
+        if axle.name in self.axles:
+            raise ValueError(f"Axle '{axle.name}' already exists")
+        if axle.chassis is not self:
+            raise ValueError(f"Axle '{axle.name}' belongs to a different chassis")
+        self.axles[axle.name] = axle
+
+    def create_axle(self, name: str, corner_names: List[str]) -> ChassisAxle:
+        """
+        Create and add a new axle to the chassis.
+
+        Args:
+            name: Name for the new axle
+            corner_names: List of corner names this axle connects to
+
+        Returns:
+            The newly created ChassisAxle
+        """
+        axle = ChassisAxle(name, self, corner_names)
+        self.add_axle(axle)
+        return axle
+
+    def get_axle(self, name: str) -> ChassisAxle:
+        """
+        Get an axle by name.
+
+        Args:
+            name: Name of the axle
+
+        Returns:
+            ChassisAxle object
+
+        Raises:
+            ValueError: If axle not found
+        """
+        if name not in self.axles:
+            raise ValueError(f"Axle '{name}' not found")
+        return self.axles[name]
+
     def _update_centroid(self) -> None:
         """Update the centroid and center of mass of all attachment points.
         The center of mass is located at the centroid."""
@@ -257,6 +250,14 @@ class Chassis:
                 updated_attachments.append((name, new_pos))
             corner.attachment_points = updated_attachments
 
+        # Update all axle attachment points
+        for axle in self.axles.values():
+            updated_attachments = []
+            for name, pos in axle.additional_attachments:
+                new_pos = R @ pos + t
+                updated_attachments.append((name, new_pos))
+            axle.additional_attachments = updated_attachments
+
         # Update chassis transformation
         self.rotation_matrix = R
         self._update_centroid()
@@ -283,12 +284,21 @@ class Chassis:
         if self.center_of_mass is not None:
             self.center_of_mass = self.center_of_mass + t
 
+        # Translate all corner attachment points
         for corner in self.corners.values():
             updated_attachments = []
             for name, pos in corner.attachment_points:
                 new_pos = pos + t
                 updated_attachments.append((name, new_pos))
             corner.attachment_points = updated_attachments
+
+        # Translate all axle attachment points
+        for axle in self.axles.values():
+            updated_attachments = []
+            for name, pos in axle.additional_attachments:
+                new_pos = pos + t
+                updated_attachments.append((name, new_pos))
+            axle.additional_attachments = updated_attachments
 
         self._update_centroid()
     
@@ -307,12 +317,21 @@ class Chassis:
         if self.center_of_mass is not None:
             self.center_of_mass = self.centroid + rotation_matrix @ (self.center_of_mass - self.centroid)
 
+        # Rotate all corner attachment points
         for corner in self.corners.values():
             updated_attachments = []
             for name, pos in corner.attachment_points:
                 new_pos = self.centroid + rotation_matrix @ (pos - self.centroid)
                 updated_attachments.append((name, new_pos))
             corner.attachment_points = updated_attachments
+
+        # Rotate all axle attachment points
+        for axle in self.axles.values():
+            updated_attachments = []
+            for name, pos in axle.additional_attachments:
+                new_pos = self.centroid + rotation_matrix @ (pos - self.centroid)
+                updated_attachments.append((name, new_pos))
+            axle.additional_attachments = updated_attachments
 
         self.rotation_matrix = rotation_matrix @ self.rotation_matrix
         self._update_centroid()
@@ -323,6 +342,7 @@ class Chassis:
         com_str = f"{self.center_of_mass} mm" if self.center_of_mass is not None else "None"
         return (f"Chassis('{self.name}',\n"
                 f"  corners={len(self.corners)},\n"
+                f"  axles={len(self.axles)},\n"
                 f"  total_attachments={total_attachments},\n"
                 f"  mass={self.mass:.3f} kg,\n"
                 f"  centroid={centroid_str},\n"
