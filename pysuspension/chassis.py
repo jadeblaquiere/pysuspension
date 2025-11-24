@@ -1,6 +1,6 @@
 import numpy as np
 from typing import List, Tuple, Union, Dict
-from units import to_mm, from_mm
+from units import to_mm, from_mm, to_kg
 
 
 class ChassisCorner:
@@ -69,16 +69,17 @@ class Chassis:
     All positions are stored internally in millimeters (mm).
     """
 
-    def __init__(self, name: str = "chassis", mass: float = 0.0):
+    def __init__(self, name: str = "chassis", mass: float = 0.0, mass_unit: str = 'kg'):
         """
         Initialize a chassis.
 
         Args:
             name: Identifier for the chassis
             mass: Mass of the chassis (default: 0.0)
+            mass_unit: Unit of input mass (default: 'kg')
         """
         self.name = name
-        self.mass = mass
+        self.mass = to_kg(mass, mass_unit)
         self.corners: Dict[str, ChassisCorner] = {}
         self.centroid = None
         self.center_of_mass = None
