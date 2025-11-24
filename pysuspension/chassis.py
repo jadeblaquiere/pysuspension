@@ -69,16 +69,19 @@ class Chassis:
     All positions are stored internally in millimeters (mm).
     """
 
-    def __init__(self, name: str = "chassis"):
+    def __init__(self, name: str = "chassis", mass: float = 0.0):
         """
         Initialize a chassis.
 
         Args:
             name: Identifier for the chassis
+            mass: Mass of the chassis (default: 0.0)
         """
         self.name = name
+        self.mass = mass
         self.corners: Dict[str, ChassisCorner] = {}
         self.centroid = None
+        self.center_of_mass = None
         self.rotation_matrix = np.eye(3)
     
     def add_corner(self, corner: ChassisCorner) -> None:
@@ -122,16 +125,19 @@ class Chassis:
         return self.corners[name]
     
     def _update_centroid(self) -> None:
-        """Update the centroid of all attachment points."""
+        """Update the centroid and center of mass of all attachment points.
+        The center of mass is located at the centroid."""
         all_points = []
-        
+
         for corner in self.corners.values():
             all_points.extend(corner.get_attachment_positions())
-        
+
         if all_points:
             self.centroid = np.mean(all_points, axis=0)
+            self.center_of_mass = self.centroid.copy()
         else:
             self.centroid = np.zeros(3)
+            self.center_of_mass = np.zeros(3)
     
     def get_all_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
         """
@@ -163,11 +169,36 @@ class Chassis:
             List of attachment positions for the specified corner in specified unit
         """
         return self.get_corner(corner_name).get_attachment_positions(unit=unit)
-    
+
+    def get_center_of_mass(self, unit: str = 'mm') -> np.ndarray:
+        """
+        Get the center of mass position.
+
+        Args:
+            unit: Unit for output (default: 'mm')
+
+        Returns:
+            3D position vector in specified unit
+        """
+        if self.center_of_mass is None:
+            return from_mm(np.zeros(3), unit)
+        return from_mm(self.center_of_mass.copy(), unit)
+
+    def set_center_of_mass(self, position: Union[np.ndarray, Tuple[float, float, float]], unit: str = 'mm') -> None:
+        """
+        Set the center of mass position.
+
+        Args:
+            position: New center of mass position [x, y, z]
+            unit: Unit of input position (default: 'mm')
+        """
+        self.center_of_mass = to_mm(np.array(position, dtype=float), unit)
+
     def fit_to_attachment_targets(self, target_positions: List[np.ndarray], unit: str = 'mm') -> float:
         """
         Fit the chassis to target attachment positions using rigid body transformation.
-        Updates all corner attachment positions based on the optimal rigid body fit.
+        Updates all corner attachment positions and center of mass based on the optimal rigid body fit.
+        The center of mass moves as a rigid body with the chassis.
 
         Args:
             target_positions: List of target positions in same order as get_all_attachment_positions()
@@ -187,32 +218,36 @@ class Chassis:
         # Convert to numpy arrays and to mm
         current_points = np.array(current_positions)
         target_points = np.array([to_mm(np.array(p, dtype=float), unit) for p in target_positions])
-        
+
         # Compute centroids
         centroid_current = np.mean(current_points, axis=0)
         centroid_target = np.mean(target_points, axis=0)
-        
+
         # Center the point sets
         current_centered = current_points - centroid_current
         target_centered = target_points - centroid_target
-        
+
         # Compute the cross-covariance matrix H
         H = current_centered.T @ target_centered
-        
+
         # Singular Value Decomposition
         U, S, Vt = np.linalg.svd(H)
-        
+
         # Compute rotation matrix
         R = Vt.T @ U.T
-        
+
         # Ensure proper rotation (det(R) = 1)
         if np.linalg.det(R) < 0:
             Vt[-1, :] *= -1
             R = Vt.T @ U.T
-        
+
         # Compute translation
         t = centroid_target - R @ centroid_current
-        
+
+        # Transform center of mass (if it exists)
+        if self.center_of_mass is not None:
+            self.center_of_mass = R @ self.center_of_mass + t
+
         # Update all corner attachment points
         for corner in self.corners.values():
             updated_attachments = []
@@ -220,27 +255,32 @@ class Chassis:
                 new_pos = R @ pos + t
                 updated_attachments.append((name, new_pos))
             corner.attachment_points = updated_attachments
-        
+
         # Update chassis transformation
         self.rotation_matrix = R
         self._update_centroid()
-        
+
         # Calculate RMS error
         transformed_points = (R @ current_points.T).T + t
         errors = target_points - transformed_points
         rms_error = np.sqrt(np.mean(np.sum(errors**2, axis=1)))
-        
+
         return rms_error
     
     def translate(self, translation: Union[np.ndarray, Tuple[float, float, float]], unit: str = 'mm') -> None:
         """
         Translate the entire chassis by a given vector.
+        The center of mass moves with the chassis.
 
         Args:
             translation: Translation vector [dx, dy, dz]
             unit: Unit of input translation (default: 'mm')
         """
         t = to_mm(np.array(translation, dtype=float), unit)
+
+        # Translate center of mass (if it exists)
+        if self.center_of_mass is not None:
+            self.center_of_mass = self.center_of_mass + t
 
         for corner in self.corners.values():
             updated_attachments = []
@@ -254,30 +294,38 @@ class Chassis:
     def rotate_about_centroid(self, rotation_matrix: np.ndarray) -> None:
         """
         Rotate the chassis about its centroid.
-        
+        The center of mass rotates with the chassis about the centroid.
+
         Args:
             rotation_matrix: 3x3 rotation matrix
         """
         if rotation_matrix.shape != (3, 3):
             raise ValueError("Rotation matrix must be 3x3")
-        
+
+        # Rotate center of mass about centroid (if it exists)
+        if self.center_of_mass is not None:
+            self.center_of_mass = self.centroid + rotation_matrix @ (self.center_of_mass - self.centroid)
+
         for corner in self.corners.values():
             updated_attachments = []
             for name, pos in corner.attachment_points:
                 new_pos = self.centroid + rotation_matrix @ (pos - self.centroid)
                 updated_attachments.append((name, new_pos))
             corner.attachment_points = updated_attachments
-        
+
         self.rotation_matrix = rotation_matrix @ self.rotation_matrix
         self._update_centroid()
     
     def __repr__(self) -> str:
         total_attachments = sum(len(c.attachment_points) for c in self.corners.values())
         centroid_str = f"{self.centroid} mm" if self.centroid is not None else "None"
+        com_str = f"{self.center_of_mass} mm" if self.center_of_mass is not None else "None"
         return (f"Chassis('{self.name}',\n"
                 f"  corners={len(self.corners)},\n"
                 f"  total_attachments={total_attachments},\n"
-                f"  centroid={centroid_str}\n"
+                f"  mass={self.mass:.3f} kg,\n"
+                f"  centroid={centroid_str},\n"
+                f"  center_of_mass={com_str}\n"
                 f")")
 
 

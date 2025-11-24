@@ -27,6 +27,7 @@ class SuspensionKnuckle:
                  toe_angle: float = 0.0,
                  camber_angle: float = 0.0,
                  wheel_offset: float = 0.0,
+                 mass: float = 0.0,
                  unit: str = 'mm'):
         """
         Initialize suspension knuckle.
@@ -38,6 +39,7 @@ class SuspensionKnuckle:
             toe_angle: Toe setting in degrees (+ leading edge out)
             camber_angle: Camber angle in degrees (+ top leans out)
             wheel_offset: Offset of wheel mounting plane from tire center (+ outward)
+            mass: Mass of the knuckle (default: 0.0)
             unit: Unit of input positions (default: 'mm')
         """
         # Convert inputs to mm for internal storage
@@ -48,14 +50,20 @@ class SuspensionKnuckle:
 
         # Tire center position (absolute, in mm)
         self.tire_center = np.array([tire_center_x_mm, tire_center_y_mm, rolling_radius_mm], dtype=float)
-        
+
         # Angular orientation (store in radians internally)
         self.toe_angle = np.radians(toe_angle)
         self.camber_angle = np.radians(camber_angle)
-        
+
         # Wheel mounting plane offset (in mm)
         self.wheel_offset = wheel_offset_mm
-        
+
+        # Mass (unitless, kg assumed)
+        self.mass = mass
+
+        # Center of mass (at tire center initially, in mm)
+        self.center_of_mass = self.tire_center.copy()
+
         # Attachment points list
         self.attachment_points: List[AttachmentPoint] = []
 
@@ -218,10 +226,10 @@ class SuspensionKnuckle:
     def get_wheel_mounting_plane_normal(self, absolute: bool = True) -> np.ndarray:
         """
         Get the wheel mounting plane normal vector.
-        
+
         Args:
             absolute: If True, return in global coordinates; if False, return in local coordinates
-            
+
         Returns:
             3D normal vector
         """
@@ -229,7 +237,29 @@ class SuspensionKnuckle:
             return self.rotation_matrix @ self.mounting_plane_normal_relative
         else:
             return self.mounting_plane_normal_relative.copy()
-    
+
+    def get_center_of_mass(self, unit: str = 'mm') -> np.ndarray:
+        """
+        Get the center of mass position.
+
+        Args:
+            unit: Unit for output (default: 'mm')
+
+        Returns:
+            3D position vector in specified unit
+        """
+        return from_mm(self.center_of_mass.copy(), unit)
+
+    def set_center_of_mass(self, position: Union[np.ndarray, Tuple[float, float, float]], unit: str = 'mm') -> None:
+        """
+        Set the center of mass position.
+
+        Args:
+            position: New center of mass position [x, y, z]
+            unit: Unit of input position (default: 'mm')
+        """
+        self.center_of_mass = to_mm(np.array(position, dtype=float), unit)
+
     def fit_to_attachment_targets(self, target_positions: List[np.ndarray],
                                   unit: str = 'mm') -> Tuple[float, np.ndarray, np.ndarray]:
         """
@@ -287,7 +317,8 @@ class SuspensionKnuckle:
     def update_from_attachment_targets(self, target_positions: List[np.ndarray], unit: str = 'mm') -> float:
         """
         Update knuckle position and orientation to best fit target attachment positions.
-        Updates tire_center and rotation_matrix (which determines toe and camber).
+        Updates tire_center, rotation_matrix (which determines toe and camber), and center_of_mass.
+        The center of mass moves as a rigid body with the knuckle.
 
         Args:
             target_positions: List of target positions in the same order as attachment points
@@ -296,23 +327,35 @@ class SuspensionKnuckle:
         Returns:
             RMS error of the fit (in mm)
         """
+        # Store old position for transformation
+        old_tire_center = self.tire_center.copy()
+        old_rotation = self.rotation_matrix.copy()
+
         rms_error, new_center, new_rotation = self.fit_to_attachment_targets(target_positions, unit)
-        
+
+        # Compute the transformation: new_pos = R @ old_pos + t
+        # where R = new_rotation @ old_rotation.T and t = new_center - R @ old_tire_center
+        R_transform = new_rotation @ old_rotation.T
+        t_transform = new_center - R_transform @ old_tire_center
+
+        # Transform center of mass
+        self.center_of_mass = R_transform @ self.center_of_mass + t_transform
+
         # Update tire center
         self.tire_center = new_center
-        
+
         # Update rotation matrix
         self.rotation_matrix = new_rotation
-        
+
         # Extract toe and camber angles from rotation matrix
         # R = R_toe @ R_camber
         # For small angles, we can extract them, but for general case:
         # camber is arcsin(R[1,2])
         # toe is arctan2(R[1,0], R[1,1])
         self.camber_angle = np.arcsin(np.clip(self.rotation_matrix[1, 2], -1, 1))
-        self.toe_angle = np.arctan2(self.rotation_matrix[1, 0], 
+        self.toe_angle = np.arctan2(self.rotation_matrix[1, 0],
                                      np.sqrt(self.rotation_matrix[1, 1]**2 + self.rotation_matrix[1, 2]**2))
-        
+
         return rms_error
 
     def set_steering_attachment(self, attachment_name: str) -> None:
@@ -440,6 +483,17 @@ class SuspensionKnuckle:
         # Calculate translation from constraint
         t = target - R @ steering_rel
 
+        # Store old position for transformation of center of mass
+        old_tire_center = self.tire_center.copy()
+        old_rotation = self.rotation_matrix.copy()
+
+        # Compute the transformation for center of mass
+        R_transform = R @ old_rotation.T
+        t_transform = t - R_transform @ old_tire_center
+
+        # Transform center of mass
+        self.center_of_mass = R_transform @ self.center_of_mass + t_transform
+
         # Update knuckle transformation
         self.tire_center = t
         self.rotation_matrix = R
@@ -461,6 +515,8 @@ class SuspensionKnuckle:
                 f"  toe={np.degrees(self.toe_angle):.2f}°,\n"
                 f"  camber={np.degrees(self.camber_angle):.2f}°,\n"
                 f"  wheel_offset={self.wheel_offset:.3f} mm,\n"
+                f"  mass={self.mass:.3f} kg,\n"
+                f"  center_of_mass={self.center_of_mass} mm,\n"
                 f"  attachments={len(self.attachment_points)}\n"
                 f")")
 
