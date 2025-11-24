@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Tuple, Optional, Union
 from attachment_point import AttachmentPoint
-from units import to_mm, from_mm
+from units import to_mm, from_mm, to_kg
 
 
 class SuspensionKnuckle:
@@ -28,7 +28,8 @@ class SuspensionKnuckle:
                  camber_angle: float = 0.0,
                  wheel_offset: float = 0.0,
                  mass: float = 0.0,
-                 unit: str = 'mm'):
+                 unit: str = 'mm',
+                 mass_unit: str = 'kg'):
         """
         Initialize suspension knuckle.
 
@@ -41,6 +42,7 @@ class SuspensionKnuckle:
             wheel_offset: Offset of wheel mounting plane from tire center (+ outward)
             mass: Mass of the knuckle (default: 0.0)
             unit: Unit of input positions (default: 'mm')
+            mass_unit: Unit of input mass (default: 'kg')
         """
         # Convert inputs to mm for internal storage
         tire_center_x_mm = to_mm(tire_center_x, unit)
@@ -58,8 +60,8 @@ class SuspensionKnuckle:
         # Wheel mounting plane offset (in mm)
         self.wheel_offset = wheel_offset_mm
 
-        # Mass (unitless, kg assumed)
-        self.mass = mass
+        # Mass (stored in kg)
+        self.mass = to_kg(mass, mass_unit)
 
         # Center of mass (at tire center initially, in mm)
         self.center_of_mass = self.tire_center.copy()

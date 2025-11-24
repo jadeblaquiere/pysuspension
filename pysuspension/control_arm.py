@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Tuple, Union
 from suspension_link import SuspensionLink
-from units import to_mm, from_mm
+from units import to_mm, from_mm, to_kg
 
 
 class ControlArm:
@@ -12,16 +12,17 @@ class ControlArm:
     All positions are stored internally in millimeters (mm).
     """
 
-    def __init__(self, name: str = "control_arm", mass: float = 0.0):
+    def __init__(self, name: str = "control_arm", mass: float = 0.0, mass_unit: str = 'kg'):
         """
         Initialize a control arm.
 
         Args:
             name: Identifier for the control arm
             mass: Mass of the control arm (default: 0.0)
+            mass_unit: Unit of input mass (default: 'kg')
         """
         self.name = name
-        self.mass = mass
+        self.mass = to_kg(mass, mass_unit)
         self.links: List[SuspensionLink] = []
         self.additional_attachments: List[Tuple[str, np.ndarray]] = []
 
