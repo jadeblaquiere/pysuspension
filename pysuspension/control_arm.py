@@ -53,7 +53,7 @@ class ControlArm:
         """
         self.links.append(link)
         # Store original endpoint positions
-        self._original_state['link_endpoints'].append((link.endpoint1.copy(), link.endpoint2.copy()))
+        self._original_state['link_endpoints'].append((link.endpoint1.position.copy(), link.endpoint2.position.copy()))
         self._update_centroid()
     
     def add_attachment_point(self, name: str, position: Union[np.ndarray, Tuple[float, float, float]],
@@ -89,8 +89,8 @@ class ControlArm:
 
         # Collect all link endpoints
         for link in self.links:
-            all_points.append(link.endpoint1)
-            all_points.append(link.endpoint2)
+            all_points.append(link.endpoint1.position)
+            all_points.append(link.endpoint2.position)
 
         # Collect attachment point positions
         for attachment in self.attachment_points:
@@ -237,10 +237,10 @@ class ControlArm:
 
         # Update all link positions
         for link in self.links:
-            new_endpoint1 = R @ link.endpoint1 + t
-            new_endpoint2 = R @ link.endpoint2 + t
-            link.endpoint1 = new_endpoint1
-            link.endpoint2 = new_endpoint2
+            new_endpoint1 = R @ link.endpoint1.position + t
+            new_endpoint2 = R @ link.endpoint2.position + t
+            link.endpoint1.set_position(new_endpoint1, unit='mm')
+            link.endpoint2.set_position(new_endpoint2, unit='mm')
             link._update_local_frame()
 
         # Update attachment point positions
@@ -273,8 +273,8 @@ class ControlArm:
         for i, link in enumerate(self.links):
             if i < len(self._original_state['link_endpoints']):
                 endpoint1, endpoint2 = self._original_state['link_endpoints'][i]
-                link.endpoint1 = endpoint1.copy()
-                link.endpoint2 = endpoint2.copy()
+                link.endpoint1.set_position(endpoint1.copy(), unit='mm')
+                link.endpoint2.set_position(endpoint2.copy(), unit='mm')
                 link._update_local_frame()
 
         # Restore attachment point positions from original state
