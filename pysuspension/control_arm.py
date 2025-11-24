@@ -30,15 +30,29 @@ class ControlArm:
         self.centroid = None
         self.center_of_mass = None
         self.rotation_matrix = np.eye(3)
+
+        # Store original state for reset (updated when links/attachments are added)
+        self._original_state = {
+            'link_endpoints': [],  # List of (endpoint1, endpoint2) tuples
+            'additional_attachments': [],  # List of (name, position) tuples
+            'centroid': None,
+            'center_of_mass': None,
+            'rotation_matrix': self.rotation_matrix.copy(),
+        }
+
+        # Flag to freeze original state after first transformation
+        self._original_state_frozen = False
         
     def add_link(self, link: SuspensionLink) -> None:
         """
         Add a suspension link to the control arm.
-        
+
         Args:
             link: SuspensionLink to add
         """
         self.links.append(link)
+        # Store original endpoint positions
+        self._original_state['link_endpoints'].append((link.endpoint1.copy(), link.endpoint2.copy()))
         self._update_centroid()
     
     def add_attachment_point(self, name: str, position: Union[np.ndarray, Tuple[float, float, float]],
@@ -55,6 +69,8 @@ class ControlArm:
         if pos.shape != (3,):
             raise ValueError("Position must be a 3-element array [x, y, z]")
         self.additional_attachments.append((name, pos))
+        # Store original attachment position
+        self._original_state['additional_attachments'].append((name, pos.copy()))
         self._update_centroid()
     
     def _update_centroid(self) -> None:
@@ -77,6 +93,12 @@ class ControlArm:
         else:
             self.centroid = np.zeros(3)
             self.center_of_mass = np.zeros(3)
+
+        # Update original state only if not frozen (i.e., during setup, before transformations)
+        # This ensures original state reflects all attachments added during setup
+        if not self._original_state_frozen:
+            self._original_state['centroid'] = self.centroid.copy() if self.centroid is not None else None
+            self._original_state['center_of_mass'] = self.center_of_mass.copy() if self.center_of_mass is not None else None
     
     def get_all_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
         """
@@ -159,6 +181,9 @@ class ControlArm:
         Returns:
             RMS error of the fit (in mm)
         """
+        # Freeze original state on first transformation
+        self._original_state_frozen = True
+
         current_positions = self.get_all_attachment_positions(unit='mm')
 
         if len(target_positions) != len(current_positions):
@@ -225,7 +250,40 @@ class ControlArm:
         rms_error = np.sqrt(np.mean(np.sum(errors**2, axis=1)))
 
         return rms_error
-    
+
+    def reset_to_origin(self) -> None:
+        """
+        Reset the control arm to its originally defined position.
+
+        This restores:
+        - All link endpoint positions
+        - All additional attachment positions
+        - Centroid and center of mass
+        - Rotation matrix
+        """
+        # Restore link endpoints
+        for i, link in enumerate(self.links):
+            if i < len(self._original_state['link_endpoints']):
+                endpoint1, endpoint2 = self._original_state['link_endpoints'][i]
+                link.endpoint1 = endpoint1.copy()
+                link.endpoint2 = endpoint2.copy()
+                link._update_local_frame()
+
+        # Restore additional attachments
+        self.additional_attachments = [(name, pos.copy()) for name, pos in self._original_state['additional_attachments']]
+
+        # Restore transformation
+        self.rotation_matrix = self._original_state['rotation_matrix'].copy()
+
+        # Restore centroid and center of mass
+        if self._original_state['centroid'] is not None:
+            self.centroid = self._original_state['centroid'].copy()
+        if self._original_state['center_of_mass'] is not None:
+            self.center_of_mass = self._original_state['center_of_mass'].copy()
+
+        # Unfreeze original state to allow subsequent transformations
+        self._original_state_frozen = False
+
     def __repr__(self) -> str:
         centroid_str = f"{self.centroid} mm" if self.centroid is not None else "None"
         com_str = f"{self.center_of_mass} mm" if self.center_of_mass is not None else "None"

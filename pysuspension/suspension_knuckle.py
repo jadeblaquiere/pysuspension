@@ -74,6 +74,15 @@ class SuspensionKnuckle:
 
         # Compute rotation matrix and tire axis
         self._update_geometry()
+
+        # Store original state for reset
+        self._original_state = {
+            'tire_center': self.tire_center.copy(),
+            'toe_angle': self.toe_angle,
+            'camber_angle': self.camber_angle,
+            'rotation_matrix': self.rotation_matrix.copy(),
+            'center_of_mass': self.center_of_mass.copy(),
+        }
     
     def _update_geometry(self):
         """Update rotation matrix and derived geometric properties."""
@@ -510,6 +519,24 @@ class SuspensionKnuckle:
         rms_error = np.sqrt(np.mean(np.sum(errors**2, axis=1)))
 
         return rms_error
+
+    def reset_to_origin(self) -> None:
+        """
+        Reset the knuckle to its originally defined position and orientation.
+
+        This restores:
+        - Tire center position
+        - Toe and camber angles
+        - Rotation matrix
+        - Center of mass position
+
+        Note: Attachment point relative positions are not changed as they define the knuckle geometry.
+        """
+        self.tire_center = self._original_state['tire_center'].copy()
+        self.toe_angle = self._original_state['toe_angle']
+        self.camber_angle = self._original_state['camber_angle']
+        self.rotation_matrix = self._original_state['rotation_matrix'].copy()
+        self.center_of_mass = self._original_state['center_of_mass'].copy()
 
     def __repr__(self) -> str:
         return (f"SuspensionKnuckle(\n"
