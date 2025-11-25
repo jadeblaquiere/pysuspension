@@ -159,10 +159,10 @@ def test_chassis_corner_reset():
     print(f"Original positions: {original_positions}")
 
     # Modify positions manually (simulate transformation)
-    corner.attachment_points[0] = (corner.attachment_points[0][0],
-                                    corner.attachment_points[0][1] + np.array([100, 50, -20]))
-    corner.attachment_points[1] = (corner.attachment_points[1][0],
-                                    corner.attachment_points[1][1] + np.array([100, 50, -20]))
+    corner.attachment_points[0].set_position(
+        corner.attachment_points[0].position + np.array([100, 50, -20]), unit='mm')
+    corner.attachment_points[1].set_position(
+        corner.attachment_points[1].position + np.array([100, 50, -20]), unit='mm')
 
     print(f"After modification: {[pos for pos in corner.get_attachment_positions(unit='mm')]}")
 
@@ -200,8 +200,8 @@ def test_chassis_axle_reset():
     print(f"Original axle attachment positions: {original_positions}")
 
     # Modify manually
-    axle.additional_attachments[0] = (axle.additional_attachments[0][0],
-                                       axle.additional_attachments[0][1] + np.array([50, 20, -30]))
+    axle.attachment_points[0].set_position(
+        axle.attachment_points[0].position + np.array([50, 20, -30]), unit='mm')
 
     print(f"After modification: {axle.get_all_attachment_positions(unit='mm')}")
 

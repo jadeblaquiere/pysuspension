@@ -1,5 +1,6 @@
 import numpy as np
 from typing import List, Tuple, Union
+from attachment_point import AttachmentPoint
 from units import to_mm, from_mm
 
 
@@ -12,40 +13,55 @@ class SuspensionLink:
     """
 
     def __init__(self,
-                 endpoint1: Union[np.ndarray, Tuple[float, float, float]],
-                 endpoint2: Union[np.ndarray, Tuple[float, float, float]],
+                 endpoint1: Union[np.ndarray, Tuple[float, float, float], AttachmentPoint],
+                 endpoint2: Union[np.ndarray, Tuple[float, float, float], AttachmentPoint],
                  name: str = "link",
                  unit: str = 'mm'):
         """
         Initialize a suspension link with two endpoints.
 
         Args:
-            endpoint1: 3D position of first endpoint [x, y, z]
-            endpoint2: 3D position of second endpoint [x, y, z]
+            endpoint1: 3D position of first endpoint [x, y, z] or AttachmentPoint
+            endpoint2: 3D position of second endpoint [x, y, z] or AttachmentPoint
             name: Identifier for the link
-            unit: Unit of input positions (default: 'mm')
+            unit: Unit of input positions (default: 'mm'), ignored if AttachmentPoint objects provided
         """
         self.name = name
 
-        # Convert inputs to mm (base unit) for internal storage
-        endpoint1_array = np.array(endpoint1, dtype=float)
-        endpoint2_array = np.array(endpoint2, dtype=float)
+        # Create AttachmentPoint objects if not provided
+        if isinstance(endpoint1, AttachmentPoint):
+            self.endpoint1 = endpoint1
+        else:
+            endpoint1_array = np.array(endpoint1, dtype=float)
+            if endpoint1_array.shape != (3,):
+                raise ValueError("Endpoint1 must be a 3-element array [x, y, z]")
+            self.endpoint1 = AttachmentPoint(
+                name=f"{name}_endpoint1",
+                position=endpoint1_array,
+                is_relative=False,
+                unit=unit,
+                parent_component=self
+            )
 
-        self.endpoint1 = to_mm(endpoint1_array, unit)
-        self.endpoint2 = to_mm(endpoint2_array, unit)
-
-        if self.endpoint1.shape != (3,) or self.endpoint2.shape != (3,):
-            raise ValueError("Endpoints must be 3-element arrays [x, y, z]")
+        if isinstance(endpoint2, AttachmentPoint):
+            self.endpoint2 = endpoint2
+        else:
+            endpoint2_array = np.array(endpoint2, dtype=float)
+            if endpoint2_array.shape != (3,):
+                raise ValueError("Endpoint2 must be a 3-element array [x, y, z]")
+            self.endpoint2 = AttachmentPoint(
+                name=f"{name}_endpoint2",
+                position=endpoint2_array,
+                is_relative=False,
+                unit=unit,
+                parent_component=self
+            )
 
         # Calculate and store the link length (constant, in mm)
-        self.length = np.linalg.norm(self.endpoint2 - self.endpoint1)
+        self.length = np.linalg.norm(self.endpoint2.position - self.endpoint1.position)
 
         if self.length < 1e-6:  # Adjusted tolerance for mm
             raise ValueError("Link endpoints are too close together (zero length)")
-
-        # Store initial relative positions for rigid body transformations
-        self.endpoint1_relative = self.endpoint1.copy()
-        self.endpoint2_relative = self.endpoint2.copy()
 
         # Calculate link properties in local frame
         self._update_local_frame()
@@ -53,11 +69,11 @@ class SuspensionLink:
     def _update_local_frame(self):
         """Update the local coordinate frame of the link."""
         # Link axis (unit vector from endpoint1 to endpoint2)
-        self.axis = (self.endpoint2 - self.endpoint1) / self.length
-        
+        self.axis = (self.endpoint2.position - self.endpoint1.position) / self.length
+
         # Link center
-        self.center = (self.endpoint1 + self.endpoint2) / 2.0
-    
+        self.center = (self.endpoint1.position + self.endpoint2.position) / 2.0
+
     def get_endpoint1(self, unit: str = 'mm') -> np.ndarray:
         """
         Get the position of the first endpoint.
@@ -68,7 +84,7 @@ class SuspensionLink:
         Returns:
             Position in specified unit
         """
-        return from_mm(self.endpoint1.copy(), unit)
+        return self.endpoint1.get_position(unit)
 
     def get_endpoint2(self, unit: str = 'mm') -> np.ndarray:
         """
@@ -80,7 +96,25 @@ class SuspensionLink:
         Returns:
             Position in specified unit
         """
-        return from_mm(self.endpoint2.copy(), unit)
+        return self.endpoint2.get_position(unit)
+
+    def get_endpoint1_attachment(self) -> AttachmentPoint:
+        """
+        Get the AttachmentPoint object for endpoint1.
+
+        Returns:
+            AttachmentPoint object for endpoint1
+        """
+        return self.endpoint1
+
+    def get_endpoint2_attachment(self) -> AttachmentPoint:
+        """
+        Get the AttachmentPoint object for endpoint2.
+
+        Returns:
+            AttachmentPoint object for endpoint2
+        """
+        return self.endpoint2
 
     def get_endpoints(self, unit: str = 'mm') -> List[np.ndarray]:
         """
@@ -92,7 +126,7 @@ class SuspensionLink:
         Returns:
             List of positions in specified unit
         """
-        return [from_mm(self.endpoint1.copy(), unit), from_mm(self.endpoint2.copy(), unit)]
+        return [self.endpoint1.get_position(unit), self.endpoint2.get_position(unit)]
 
     def get_center(self, unit: str = 'mm') -> np.ndarray:
         """
@@ -152,10 +186,10 @@ class SuspensionLink:
             raise ValueError(f"New endpoints must maintain link length of {self.length:.3f} mm, "
                            f"got {new_length:.3f} mm")
 
-        self.endpoint1 = new_endpoint1
-        self.endpoint2 = new_endpoint2
+        self.endpoint1.set_position(new_endpoint1, unit='mm')
+        self.endpoint2.set_position(new_endpoint2, unit='mm')
         self._update_local_frame()
-    
+
     def set_endpoint1(self, position: Union[np.ndarray, Tuple[float, float, float]], unit: str = 'mm') -> None:
         """
         Set the position of endpoint1, adjusting endpoint2 to maintain link length and direction.
@@ -166,8 +200,9 @@ class SuspensionLink:
         """
         new_endpoint1 = to_mm(np.array(position, dtype=float), unit)
         # Keep the same axis direction, just translate
-        self.endpoint2 = new_endpoint1 + self.axis * self.length
-        self.endpoint1 = new_endpoint1
+        new_endpoint2 = new_endpoint1 + self.axis * self.length
+        self.endpoint1.set_position(new_endpoint1, unit='mm')
+        self.endpoint2.set_position(new_endpoint2, unit='mm')
         self._update_local_frame()
 
     def set_endpoint2(self, position: Union[np.ndarray, Tuple[float, float, float]], unit: str = 'mm') -> None:
@@ -180,8 +215,9 @@ class SuspensionLink:
         """
         new_endpoint2 = to_mm(np.array(position, dtype=float), unit)
         # Keep the same axis direction, just translate
-        self.endpoint1 = new_endpoint2 - self.axis * self.length
-        self.endpoint2 = new_endpoint2
+        new_endpoint1 = new_endpoint2 - self.axis * self.length
+        self.endpoint1.set_position(new_endpoint1, unit='mm')
+        self.endpoint2.set_position(new_endpoint2, unit='mm')
         self._update_local_frame()
 
     def translate(self, translation: Union[np.ndarray, Tuple[float, float, float]], unit: str = 'mm') -> None:
@@ -193,51 +229,55 @@ class SuspensionLink:
             unit: Unit of input translation (default: 'mm')
         """
         t = to_mm(np.array(translation, dtype=float), unit)
-        self.endpoint1 += t
-        self.endpoint2 += t
+        self.endpoint1.set_position(self.endpoint1.position + t, unit='mm')
+        self.endpoint2.set_position(self.endpoint2.position + t, unit='mm')
         self.center += t
-    
+
     def rotate_about_center(self, rotation_matrix: np.ndarray) -> None:
         """
         Rotate the link about its center point.
-        
+
         Args:
             rotation_matrix: 3x3 rotation matrix
         """
         if rotation_matrix.shape != (3, 3):
             raise ValueError("Rotation matrix must be 3x3")
-        
+
         # Rotate endpoints about center
-        self.endpoint1 = self.center + rotation_matrix @ (self.endpoint1 - self.center)
-        self.endpoint2 = self.center + rotation_matrix @ (self.endpoint2 - self.center)
+        new_endpoint1 = self.center + rotation_matrix @ (self.endpoint1.position - self.center)
+        new_endpoint2 = self.center + rotation_matrix @ (self.endpoint2.position - self.center)
+        self.endpoint1.set_position(new_endpoint1, unit='mm')
+        self.endpoint2.set_position(new_endpoint2, unit='mm')
         self._update_local_frame()
-    
+
     def rotate_about_endpoint1(self, rotation_matrix: np.ndarray) -> None:
         """
         Rotate the link about endpoint1.
-        
+
         Args:
             rotation_matrix: 3x3 rotation matrix
         """
         if rotation_matrix.shape != (3, 3):
             raise ValueError("Rotation matrix must be 3x3")
-        
+
         # Rotate endpoint2 about endpoint1
-        self.endpoint2 = self.endpoint1 + rotation_matrix @ (self.endpoint2 - self.endpoint1)
+        new_endpoint2 = self.endpoint1.position + rotation_matrix @ (self.endpoint2.position - self.endpoint1.position)
+        self.endpoint2.set_position(new_endpoint2, unit='mm')
         self._update_local_frame()
-    
+
     def rotate_about_endpoint2(self, rotation_matrix: np.ndarray) -> None:
         """
         Rotate the link about endpoint2.
-        
+
         Args:
             rotation_matrix: 3x3 rotation matrix
         """
         if rotation_matrix.shape != (3, 3):
             raise ValueError("Rotation matrix must be 3x3")
-        
+
         # Rotate endpoint1 about endpoint2
-        self.endpoint1 = self.endpoint2 + rotation_matrix @ (self.endpoint1 - self.endpoint2)
+        new_endpoint1 = self.endpoint2.position + rotation_matrix @ (self.endpoint1.position - self.endpoint2.position)
+        self.endpoint1.set_position(new_endpoint1, unit='mm')
         self._update_local_frame()
     
     def fit_to_attachment_targets(self, target_endpoints: List[Union[np.ndarray, Tuple[float, float, float]]],
@@ -281,20 +321,22 @@ class SuspensionLink:
         # maintaining the fixed link length
         self.center = target_center.copy()
         self.axis = target_axis.copy()
-        self.endpoint1 = self.center - (self.length / 2.0) * self.axis
-        self.endpoint2 = self.center + (self.length / 2.0) * self.axis
+        new_endpoint1 = self.center - (self.length / 2.0) * self.axis
+        new_endpoint2 = self.center + (self.length / 2.0) * self.axis
+        self.endpoint1.set_position(new_endpoint1, unit='mm')
+        self.endpoint2.set_position(new_endpoint2, unit='mm')
 
         # Calculate RMS error (in mm)
-        error1 = target1 - self.endpoint1
-        error2 = target2 - self.endpoint2
+        error1 = target1 - self.endpoint1.position
+        error2 = target2 - self.endpoint2.position
         rms_error = np.sqrt((np.sum(error1**2) + np.sum(error2**2)) / 2.0)
 
         return rms_error
-    
+
     def __repr__(self) -> str:
         return (f"SuspensionLink('{self.name}',\n"
-                f"  endpoint1={self.endpoint1} mm,\n"
-                f"  endpoint2={self.endpoint2} mm,\n"
+                f"  endpoint1={self.endpoint1.position} mm,\n"
+                f"  endpoint2={self.endpoint2.position} mm,\n"
                 f"  length={self.length:.3f} mm\n"
                 f")")
 
