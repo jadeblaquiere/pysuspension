@@ -12,11 +12,16 @@ class CoilSpring:
     Spring rate is stored internally in kg/mm (kilogram-force per millimeter).
     Forces are stored internally in Newtons (N).
 
+    Sign convention:
+    - Positive length change = compression
+    - Negative length change = extension
+    - Preload force is positive (compression)
+
     The spring has:
     - Two attachment points (endpoints)
     - Spring rate (stiffness)
     - Initial length (distance between endpoints at construction)
-    - Preload force (reaction force at initial length)
+    - Preload force (reaction force at initial length, positive for compression)
     - Mass (concentrated at the centroid)
     - Reaction force that varies linearly with length change
     """
@@ -128,16 +133,18 @@ class CoilSpring:
         self.center_of_mass = self.center.copy()
 
         # Calculate length change from initial
-        self.length_change = self.current_length - self.initial_length
+        # Sign convention: positive = compression, negative = extension
+        self.length_change = self.initial_length - self.current_length
 
         # Calculate current reaction force
         # Force = preload + spring_rate * length_change
         # Note: spring_rate is in kgf/mm, need to convert to N
+        # With sign convention: positive length_change = compression increases force
         force_kgf = self.preload_force / 9.80665 + self.spring_rate * self.length_change
         self.reaction_force_magnitude = force_kgf * 9.80665  # Convert to N
 
-        # Reaction force vector (along axis, positive in compression)
-        # If spring is compressed (length_change < 0), force pushes outward
+        # Reaction force vector (along axis)
+        # Compression (positive length_change) increases force magnitude
         self.reaction_force = -self.reaction_force_magnitude * self.axis
 
     def get_endpoint1(self, unit: str = 'mm') -> np.ndarray:
@@ -247,7 +254,7 @@ class CoilSpring:
 
     def get_length_change(self, unit: str = 'mm') -> float:
         """
-        Get the change in length from initial (negative = compression, positive = extension).
+        Get the change in length from initial (positive = compression, negative = extension).
 
         Args:
             unit: Unit for output (default: 'mm')
@@ -484,7 +491,7 @@ if __name__ == "__main__":
     spring.fit_to_attachment_targets(new_targets, unit='mm')
 
     print(f"Current length: {spring.get_current_length()} mm")
-    print(f"Length change: {spring.get_length_change()} mm (negative = compression)")
+    print(f"Length change: {spring.get_length_change()} mm (positive = compression)")
     print(f"Reaction force: {spring.get_reaction_force_magnitude()} N")
     print(f"Reaction force increase: {spring.get_reaction_force_magnitude() - 500.0:.3f} N")
 
@@ -497,7 +504,7 @@ if __name__ == "__main__":
     spring.fit_to_attachment_targets(new_targets, unit='mm')
 
     print(f"Current length: {spring.get_current_length()} mm")
-    print(f"Length change: {spring.get_length_change()} mm (positive = extension)")
+    print(f"Length change: {spring.get_length_change()} mm (negative = extension)")
     print(f"Reaction force: {spring.get_reaction_force_magnitude()} N")
     print(f"Reaction force change: {spring.get_reaction_force_magnitude() - 500.0:.3f} N")
 
