@@ -12,11 +12,18 @@ class CoilSpring:
     Spring rate is stored internally in kg/mm (kilogram-force per millimeter).
     Forces are stored internally in Newtons (N).
 
+    Sign conventions:
+    - Negative length change = compression (spring gets shorter)
+    - Positive length change = extension (spring gets longer)
+    - Positive reaction force = compression (spring pushes outward)
+    - Negative reaction force = extension/tension (spring pulls inward)
+    - Preload force is positive (compressive)
+
     The spring has:
     - Two attachment points (endpoints)
     - Spring rate (stiffness)
     - Initial length (distance between endpoints at construction)
-    - Preload force (reaction force at initial length)
+    - Preload force (reaction force at initial length, positive for compression)
     - Mass (concentrated at the centroid)
     - Reaction force that varies linearly with length change
     """
@@ -128,16 +135,19 @@ class CoilSpring:
         self.center_of_mass = self.center.copy()
 
         # Calculate length change from initial
+        # Sign convention: negative = compression, positive = extension
         self.length_change = self.current_length - self.initial_length
 
         # Calculate current reaction force
-        # Force = preload + spring_rate * length_change
+        # Force = preload - spring_rate * length_change
         # Note: spring_rate is in kgf/mm, need to convert to N
-        force_kgf = self.preload_force / 9.80665 + self.spring_rate * self.length_change
+        # With negative length_change (compression): force = preload + spring_rate * |length_change|
+        # With positive length_change (extension): force = preload - spring_rate * length_change
+        force_kgf = self.preload_force / 9.80665 - self.spring_rate * self.length_change
         self.reaction_force_magnitude = force_kgf * 9.80665  # Convert to N
 
-        # Reaction force vector (along axis, positive in compression)
-        # If spring is compressed (length_change < 0), force pushes outward
+        # Reaction force vector (along axis)
+        # Positive force (compression) pushes outward, negative force (tension) pulls inward
         self.reaction_force = -self.reaction_force_magnitude * self.axis
 
     def get_endpoint1(self, unit: str = 'mm') -> np.ndarray:
@@ -485,7 +495,7 @@ if __name__ == "__main__":
 
     print(f"Current length: {spring.get_current_length()} mm")
     print(f"Length change: {spring.get_length_change()} mm (negative = compression)")
-    print(f"Reaction force: {spring.get_reaction_force_magnitude()} N")
+    print(f"Reaction force: {spring.get_reaction_force_magnitude()} N (positive = compression)")
     print(f"Reaction force increase: {spring.get_reaction_force_magnitude() - 500.0:.3f} N")
 
     # Test extension
@@ -498,7 +508,7 @@ if __name__ == "__main__":
 
     print(f"Current length: {spring.get_current_length()} mm")
     print(f"Length change: {spring.get_length_change()} mm (positive = extension)")
-    print(f"Reaction force: {spring.get_reaction_force_magnitude()} N")
+    print(f"Reaction force: {spring.get_reaction_force_magnitude()} N (negative = tension)")
     print(f"Reaction force change: {spring.get_reaction_force_magnitude() - 500.0:.3f} N")
 
     # Test unit conversions
