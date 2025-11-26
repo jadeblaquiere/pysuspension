@@ -61,9 +61,89 @@ MASS_UNIT_TO_KG = {
 KG_TO_MASS_UNIT = {unit: 1.0 / factor for unit, factor in MASS_UNIT_TO_KG.items()}
 
 
+# Spring rate conversion factors to kg/mm (base unit)
+# Note: kg here refers to kilogram-force (kgf), not mass
+SPRING_RATE_UNIT_TO_KG_PER_MM = {
+    'kg/mm': 1.0,
+    'kgf/mm': 1.0,
+    'n/mm': 1.0 / 9.80665,  # 1 kgf = 9.80665 N
+    'lbs/in': 0.453592 / 25.4,  # 1 lbf = 0.453592 kgf, 1 in = 25.4 mm
+    'lbf/in': 0.453592 / 25.4,
+}
+
+# Conversion factors from kg/mm
+KG_PER_MM_TO_SPRING_RATE_UNIT = {unit: 1.0 / factor for unit, factor in SPRING_RATE_UNIT_TO_KG_PER_MM.items()}
+
+
+def validate_spring_rate_unit(unit: str) -> str:
+    """
+    Validate and normalize spring rate unit string.
+
+    Args:
+        unit: Spring rate unit string (e.g., 'kg/mm', 'N/mm', 'lbs/in')
+
+    Returns:
+        Normalized spring rate unit string
+
+    Raises:
+        ValueError: If unit is not recognized
+    """
+    unit_lower = unit.lower().strip()
+    if unit_lower not in SPRING_RATE_UNIT_TO_KG_PER_MM:
+        valid_units = sorted(set(['kg/mm', 'N/mm', 'lbs/in']))
+        raise ValueError(f"Unknown spring rate unit '{unit}'. Valid units: {valid_units}")
+    return unit_lower
+
+
+def to_kg_per_mm(value: Union[float, np.ndarray], from_unit: str = 'kg/mm') -> Union[float, np.ndarray]:
+    """
+    Convert a spring rate value from the specified unit to kg/mm (base unit).
+
+    Args:
+        value: Value or array to convert
+        from_unit: Source unit (default: 'kg/mm')
+
+    Returns:
+        Value in kg/mm
+    """
+    unit = validate_spring_rate_unit(from_unit)
+    return value * SPRING_RATE_UNIT_TO_KG_PER_MM[unit]
+
+
+def from_kg_per_mm(value: Union[float, np.ndarray], to_unit: str = 'kg/mm') -> Union[float, np.ndarray]:
+    """
+    Convert a spring rate value from kg/mm (base unit) to the specified unit.
+
+    Args:
+        value: Value or array in kg/mm
+        to_unit: Target unit (default: 'kg/mm')
+
+    Returns:
+        Value in target unit
+    """
+    unit = validate_spring_rate_unit(to_unit)
+    return value * KG_PER_MM_TO_SPRING_RATE_UNIT[unit]
+
+
+def convert_spring_rate(value: Union[float, np.ndarray], from_unit: str, to_unit: str) -> Union[float, np.ndarray]:
+    """
+    Convert a spring rate value from one unit to another.
+
+    Args:
+        value: Value or array to convert
+        from_unit: Source unit
+        to_unit: Target unit
+
+    Returns:
+        Value in target unit
+    """
+    kg_per_mm_value = to_kg_per_mm(value, from_unit)
+    return from_kg_per_mm(kg_per_mm_value, to_unit)
+
+
 def validate_unit(unit: str) -> str:
     """
-    Validate and normalize unit string.
+    Validate and normalize length unit string.
 
     Args:
         unit: Unit string (e.g., 'mm', 'm', 'in')
