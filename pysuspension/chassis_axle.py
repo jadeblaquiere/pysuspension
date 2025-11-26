@@ -169,6 +169,53 @@ class ChassisAxle:
                 original = self._original_attachment_points[i]
                 attachment.set_position(original.position, unit='mm')
 
+    def to_dict(self) -> dict:
+        """
+        Serialize the chassis axle to a dictionary.
+
+        Note: The chassis reference is not serialized to avoid circular references.
+        It must be provided when deserializing.
+
+        Returns:
+            Dictionary representation suitable for JSON serialization
+        """
+        return {
+            'name': self.name,
+            'corner_names': self.corner_names.copy(),
+            'attachment_points': [ap.to_dict() for ap in self.attachment_points]
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict, chassis: 'Chassis') -> 'ChassisAxle':
+        """
+        Deserialize a chassis axle from a dictionary.
+
+        Args:
+            data: Dictionary containing chassis axle data
+            chassis: Reference to the parent Chassis object
+
+        Returns:
+            New ChassisAxle instance
+
+        Raises:
+            KeyError: If required fields are missing
+            ValueError: If data is invalid or corners don't exist
+        """
+        axle = cls(
+            name=data['name'],
+            chassis=chassis,
+            corner_names=data['corner_names']
+        )
+
+        # Add attachment points
+        for ap_data in data.get('attachment_points', []):
+            position = ap_data['position']
+            name = ap_data['name']
+            unit = ap_data.get('unit', 'mm')
+            axle.add_attachment_point(name, position, unit=unit)
+
+        return axle
+
     def __repr__(self) -> str:
         return (f"ChassisAxle('{self.name}',\n"
                 f"  corners={self.corner_names},\n"

@@ -451,6 +451,66 @@ class SteeringRack:
         self.left_tie_rod._update_local_frame()
         self.right_tie_rod._update_local_frame()
 
+    def to_dict(self) -> dict:
+        """
+        Serialize the steering rack to a dictionary.
+
+        Returns:
+            Dictionary representation suitable for JSON serialization
+        """
+        return {
+            'name': self.name,
+            'housing_attachment_points': [ap.to_dict() for ap in self.housing_attachment_points],
+            'left_tie_rod': self.left_tie_rod.to_dict(),
+            'right_tie_rod': self.right_tie_rod.to_dict(),
+            'travel_per_rotation': float(self.travel_per_rotation),  # Store in mm
+            'max_displacement': float(self.max_displacement),  # Store in mm
+            'current_angle': float(self.current_angle),  # Store current state
+            'current_displacement': float(self.current_displacement),  # Store current state
+            'unit': 'mm'
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'SteeringRack':
+        """
+        Deserialize a steering rack from a dictionary.
+
+        Args:
+            data: Dictionary containing steering rack data
+
+        Returns:
+            New SteeringRack instance
+
+        Raises:
+            KeyError: If required fields are missing
+            ValueError: If data is invalid
+        """
+        # Deserialize tie rods to get inner/outer positions
+        left_tie_rod = SuspensionLink.from_dict(data['left_tie_rod'])
+        right_tie_rod = SuspensionLink.from_dict(data['right_tie_rod'])
+
+        # Extract housing attachment positions
+        housing_positions = [ap_data['position'] for ap_data in data['housing_attachment_points']]
+
+        # Create the steering rack
+        rack = cls(
+            housing_attachments=housing_positions,
+            left_inner_pivot=left_tie_rod.endpoint1.position,
+            right_inner_pivot=right_tie_rod.endpoint1.position,
+            left_outer_attachment=left_tie_rod.endpoint2.position,
+            right_outer_attachment=right_tie_rod.endpoint2.position,
+            travel_per_rotation=data['travel_per_rotation'],
+            max_displacement=data['max_displacement'],
+            name=data['name'],
+            unit=data.get('unit', 'mm')
+        )
+
+        # Restore current state if present
+        if 'current_angle' in data:
+            rack.set_turn_angle(data['current_angle'])
+
+        return rack
+
     def __repr__(self) -> str:
         left_len, right_len = self.get_tie_rod_lengths(unit='mm')
         return (f"SteeringRack('{self.name}',\n"
