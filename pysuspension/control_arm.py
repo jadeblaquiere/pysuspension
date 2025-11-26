@@ -319,6 +319,58 @@ class ControlArm:
         """
         return self.attachment_points.copy()
 
+    def to_dict(self) -> dict:
+        """
+        Serialize the control arm to a dictionary.
+
+        Returns:
+            Dictionary representation suitable for JSON serialization
+        """
+        return {
+            'name': self.name,
+            'mass': float(self.mass),  # Store in kg
+            'mass_unit': 'kg',
+            'links': [link.to_dict() for link in self.links],
+            'attachment_points': [ap.to_dict() for ap in self.attachment_points]
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'ControlArm':
+        """
+        Deserialize a control arm from a dictionary.
+
+        Args:
+            data: Dictionary containing control arm data
+
+        Returns:
+            New ControlArm instance
+
+        Raises:
+            KeyError: If required fields are missing
+            ValueError: If data is invalid
+        """
+        # Create the control arm
+        control_arm = cls(
+            name=data['name'],
+            mass=data.get('mass', 0.0),
+            mass_unit=data.get('mass_unit', 'kg')
+        )
+
+        # Add links
+        for link_data in data.get('links', []):
+            link = SuspensionLink.from_dict(link_data)
+            control_arm.add_link(link)
+
+        # Add attachment points
+        for ap_data in data.get('attachment_points', []):
+            # Get position from the attachment point data
+            position = ap_data['position']
+            unit = ap_data.get('unit', 'mm')
+            name = ap_data['name']
+            control_arm.add_attachment_point(name, position, unit=unit)
+
+        return control_arm
+
     def __repr__(self) -> str:
         centroid_str = f"{self.centroid} mm" if self.centroid is not None else "None"
         com_str = f"{self.center_of_mass} mm" if self.center_of_mass is not None else "None"

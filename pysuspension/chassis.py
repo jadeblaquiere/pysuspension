@@ -379,6 +379,55 @@ class Chassis:
         # Unfreeze original state to allow subsequent transformations
         self._original_state_frozen = False
 
+    def to_dict(self) -> dict:
+        """
+        Serialize the chassis and all its components to a dictionary.
+
+        Returns:
+            Dictionary representation suitable for JSON serialization
+        """
+        return {
+            'name': self.name,
+            'mass': float(self.mass),  # Store in kg
+            'mass_unit': 'kg',
+            'corners': {name: corner.to_dict() for name, corner in self.corners.items()},
+            'axles': {name: axle.to_dict() for name, axle in self.axles.items()}
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'Chassis':
+        """
+        Deserialize a chassis from a dictionary.
+
+        Args:
+            data: Dictionary containing chassis data
+
+        Returns:
+            New Chassis instance with all components
+
+        Raises:
+            KeyError: If required fields are missing
+            ValueError: If data is invalid
+        """
+        # Create the chassis
+        chassis = cls(
+            name=data['name'],
+            mass=data.get('mass', 0.0),
+            mass_unit=data.get('mass_unit', 'kg')
+        )
+
+        # Add corners
+        for corner_name, corner_data in data.get('corners', {}).items():
+            corner = ChassisCorner.from_dict(corner_data)
+            chassis.add_corner(corner)
+
+        # Add axles (after corners, since axles reference corners)
+        for axle_name, axle_data in data.get('axles', {}).items():
+            axle = ChassisAxle.from_dict(axle_data, chassis)
+            chassis.add_axle(axle)
+
+        return chassis
+
     def __repr__(self) -> str:
         total_attachments = sum(len(c.attachment_points) for c in self.corners.values())
         centroid_str = f"{self.centroid} mm" if self.centroid is not None else "None"

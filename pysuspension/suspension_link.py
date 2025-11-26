@@ -333,6 +333,55 @@ class SuspensionLink:
 
         return rms_error
 
+    def to_dict(self) -> dict:
+        """
+        Serialize the suspension link to a dictionary.
+
+        Returns:
+            Dictionary representation suitable for JSON serialization
+        """
+        return {
+            'name': self.name,
+            'endpoint1': self.endpoint1.to_dict(),
+            'endpoint2': self.endpoint2.to_dict(),
+            'length': float(self.length)  # Store length in mm for validation
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'SuspensionLink':
+        """
+        Deserialize a suspension link from a dictionary.
+
+        Args:
+            data: Dictionary containing suspension link data
+
+        Returns:
+            New SuspensionLink instance
+
+        Raises:
+            KeyError: If required fields are missing
+            ValueError: If data is invalid
+        """
+        # Recreate AttachmentPoint objects
+        endpoint1 = AttachmentPoint.from_dict(data['endpoint1'])
+        endpoint2 = AttachmentPoint.from_dict(data['endpoint2'])
+
+        # Create the link with the AttachmentPoint objects
+        link = cls(
+            endpoint1=endpoint1,
+            endpoint2=endpoint2,
+            name=data['name'],
+            unit='mm'  # AttachmentPoints already in mm
+        )
+
+        # Validate that the deserialized length matches
+        expected_length = data.get('length')
+        if expected_length is not None and abs(link.length - expected_length) > 1e-3:
+            raise ValueError(f"Deserialized link length {link.length:.3f} mm doesn't match "
+                           f"stored length {expected_length:.3f} mm")
+
+        return link
+
     def __repr__(self) -> str:
         return (f"SuspensionLink('{self.name}',\n"
                 f"  endpoint1={self.endpoint1.position} mm,\n"

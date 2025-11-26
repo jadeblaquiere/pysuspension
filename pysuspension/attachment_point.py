@@ -144,6 +144,47 @@ class AttachmentPoint:
             parent_component=self.parent_component
         )
 
+    def to_dict(self) -> dict:
+        """
+        Serialize the attachment point to a dictionary.
+
+        Note: parent_component and connections are not serialized to avoid circular references.
+        These should be reconstructed when deserializing the parent component.
+
+        Returns:
+            Dictionary representation suitable for JSON serialization
+        """
+        return {
+            'name': self.name,
+            'position': self._position_mm.tolist(),  # Convert numpy array to list
+            'is_relative': self.is_relative,
+            'unit': 'mm'  # Always serialize in mm for consistency
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict, parent_component: Optional[object] = None) -> 'AttachmentPoint':
+        """
+        Deserialize an attachment point from a dictionary.
+
+        Args:
+            data: Dictionary containing attachment point data
+            parent_component: Optional parent component to associate with this point
+
+        Returns:
+            New AttachmentPoint instance
+
+        Raises:
+            KeyError: If required fields are missing
+            ValueError: If data is invalid
+        """
+        return cls(
+            name=data['name'],
+            position=data['position'],
+            is_relative=data.get('is_relative', True),
+            unit=data.get('unit', 'mm'),
+            parent_component=parent_component
+        )
+
 
 if __name__ == "__main__":
     print("=" * 60)

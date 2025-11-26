@@ -542,6 +542,70 @@ class SuspensionKnuckle:
         self.rotation_matrix = self._original_state['rotation_matrix'].copy()
         self.center_of_mass = self._original_state['center_of_mass'].copy()
 
+    def to_dict(self) -> dict:
+        """
+        Serialize the suspension knuckle to a dictionary.
+
+        Returns:
+            Dictionary representation suitable for JSON serialization
+        """
+        return {
+            'tire_center': self.tire_center.tolist(),  # Convert numpy array to list
+            'toe_angle': float(np.degrees(self.toe_angle)),  # Store in degrees for readability
+            'camber_angle': float(np.degrees(self.camber_angle)),  # Store in degrees
+            'wheel_offset': float(self.wheel_offset),  # Store in mm
+            'mass': float(self.mass),  # Store in kg
+            'mass_unit': 'kg',
+            'unit': 'mm',
+            'attachment_points': [ap.to_dict() for ap in self.attachment_points],
+            'steering_attachment_name': self.steering_attachment_name
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'SuspensionKnuckle':
+        """
+        Deserialize a suspension knuckle from a dictionary.
+
+        Args:
+            data: Dictionary containing suspension knuckle data
+
+        Returns:
+            New SuspensionKnuckle instance
+
+        Raises:
+            KeyError: If required fields are missing
+            ValueError: If data is invalid
+        """
+        # Extract tire center components
+        tire_center = data['tire_center']
+
+        # Create the knuckle
+        knuckle = cls(
+            tire_center_x=tire_center[0],
+            tire_center_y=tire_center[1],
+            rolling_radius=tire_center[2],
+            toe_angle=data.get('toe_angle', 0.0),
+            camber_angle=data.get('camber_angle', 0.0),
+            wheel_offset=data.get('wheel_offset', 0.0),
+            mass=data.get('mass', 0.0),
+            unit=data.get('unit', 'mm'),
+            mass_unit=data.get('mass_unit', 'kg')
+        )
+
+        # Add attachment points
+        for ap_data in data.get('attachment_points', []):
+            position = ap_data['position']
+            name = ap_data['name']
+            is_relative = ap_data.get('is_relative', True)
+            unit = ap_data.get('unit', 'mm')
+            knuckle.add_attachment_point(name, position, relative=is_relative, unit=unit)
+
+        # Set steering attachment if specified
+        if 'steering_attachment_name' in data and data['steering_attachment_name'] is not None:
+            knuckle.steering_attachment_name = data['steering_attachment_name']
+
+        return knuckle
+
     def __repr__(self) -> str:
         return (f"SuspensionKnuckle(\n"
                 f"  tire_center={self.tire_center} mm,\n"

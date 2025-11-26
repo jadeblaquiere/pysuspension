@@ -104,5 +104,43 @@ class ChassisCorner:
                 original = self._original_attachment_points[i]
                 attachment.set_position(original.position, unit='mm')
 
+    def to_dict(self) -> dict:
+        """
+        Serialize the chassis corner to a dictionary.
+
+        Returns:
+            Dictionary representation suitable for JSON serialization
+        """
+        return {
+            'name': self.name,
+            'attachment_points': [ap.to_dict() for ap in self.attachment_points]
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'ChassisCorner':
+        """
+        Deserialize a chassis corner from a dictionary.
+
+        Args:
+            data: Dictionary containing chassis corner data
+
+        Returns:
+            New ChassisCorner instance
+
+        Raises:
+            KeyError: If required fields are missing
+            ValueError: If data is invalid
+        """
+        corner = cls(name=data['name'])
+
+        # Add attachment points
+        for ap_data in data.get('attachment_points', []):
+            position = ap_data['position']
+            name = ap_data['name']
+            unit = ap_data.get('unit', 'mm')
+            corner.add_attachment_point(name, position, unit=unit)
+
+        return corner
+
     def __repr__(self) -> str:
         return f"ChassisCorner('{self.name}', attachments={len(self.attachment_points)})"
