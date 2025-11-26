@@ -69,6 +69,8 @@ SPRING_RATE_UNIT_TO_KG_PER_MM = {
     'n/mm': 1.0 / 9.80665,  # 1 kgf = 9.80665 N
     'lbs/in': 0.453592 / 25.4,  # 1 lbf = 0.453592 kgf, 1 in = 25.4 mm
     'lbf/in': 0.453592 / 25.4,
+    'lbs/ft': 0.453592 / 304.8,  # 1 lbf = 0.453592 kgf, 1 ft = 304.8 mm
+    'lbf/ft': 0.453592 / 304.8,
 }
 
 # Conversion factors from kg/mm
