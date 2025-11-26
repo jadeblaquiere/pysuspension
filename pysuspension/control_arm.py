@@ -376,7 +376,7 @@ class ControlArm:
         com_str = f"{self.center_of_mass} mm" if self.center_of_mass is not None else "None"
         return (f"ControlArm('{self.name}',\n"
                 f"  links={len(self.links)},\n"
-                f"  additional_attachments={len(self.additional_attachments)},\n"
+                f"  additional_attachments={len(self.attachment_points)},\n"
                 f"  total_unique_attachments={len(self.get_all_attachment_positions())},\n"
                 f"  mass={self.mass:.3f} kg,\n"
                 f"  centroid={centroid_str},\n"
