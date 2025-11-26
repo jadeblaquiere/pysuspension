@@ -19,6 +19,12 @@ class CoilSpring:
     - Negative reaction force = extension/tension (spring pulls inward)
     - Preload force is positive (compressive)
 
+    By default, the spring does not allow tension (negative reaction forces).
+    This models the common mechanical behavior where springs can only push,
+    not pull. When extended beyond the point where force would become negative,
+    the reaction force is clamped to zero. Set allow_tension=True to allow
+    negative forces (tension).
+
     The spring has:
     - Two attachment points (endpoints)
     - Spring rate (stiffness)
@@ -26,6 +32,7 @@ class CoilSpring:
     - Preload force (reaction force at initial length, positive for compression)
     - Mass (concentrated at the centroid)
     - Reaction force that varies linearly with length change
+    - Optional tension behavior (default: compression only)
     """
 
     def __init__(self,
@@ -38,7 +45,8 @@ class CoilSpring:
                  unit: str = 'mm',
                  spring_rate_unit: str = 'kg/mm',
                  force_unit: str = 'N',
-                 mass_unit: str = 'kg'):
+                 mass_unit: str = 'kg',
+                 allow_tension: bool = False):
         """
         Initialize a coil spring.
 
@@ -53,6 +61,7 @@ class CoilSpring:
             spring_rate_unit: Unit of spring rate (default: 'kg/mm')
             force_unit: Unit of force inputs/outputs (default: 'N')
             mass_unit: Unit of mass input (default: 'kg')
+            allow_tension: Allow negative reaction forces/tension (default: False)
         """
         self.name = name
 
@@ -108,6 +117,9 @@ class CoilSpring:
         # Store mass in kg
         self.mass = to_kg(mass, mass_unit)
 
+        # Store tension behavior flag
+        self.allow_tension = allow_tension
+
         # Calculate spring properties in local frame
         self._update_local_frame()
 
@@ -145,6 +157,11 @@ class CoilSpring:
         # With positive length_change (extension): force = preload - spring_rate * length_change
         force_kgf = self.preload_force / 9.80665 - self.spring_rate * self.length_change
         self.reaction_force_magnitude = force_kgf * 9.80665  # Convert to N
+
+        # Clamp force to zero if tension is not allowed
+        # This models springs that can only push, not pull
+        if not self.allow_tension and self.reaction_force_magnitude < 0.0:
+            self.reaction_force_magnitude = 0.0
 
         # Reaction force vector (along axis)
         # Positive force (compression) pushes outward, negative force (tension) pulls inward
@@ -399,7 +416,8 @@ class CoilSpring:
             'force_unit': 'N',
             'mass': float(self.mass),  # Store in kg
             'mass_unit': 'kg',
-            'initial_length': float(self.initial_length)  # Store in mm for validation
+            'initial_length': float(self.initial_length),  # Store in mm for validation
+            'allow_tension': self.allow_tension
         }
 
     @classmethod
@@ -432,7 +450,8 @@ class CoilSpring:
             unit='mm',  # AttachmentPoints already in mm
             spring_rate_unit=data.get('spring_rate_unit', 'kg/mm'),
             force_unit=data.get('force_unit', 'N'),
-            mass_unit=data.get('mass_unit', 'kg')
+            mass_unit=data.get('mass_unit', 'kg'),
+            allow_tension=data.get('allow_tension', False)
         )
 
         # Validate that the deserialized initial length matches
@@ -537,5 +556,44 @@ if __name__ == "__main__":
     spring.reset_to_origin()
     print(f"After reset - length: {spring.get_current_length()} mm")
     print(f"After reset - reaction force: {spring.get_reaction_force_magnitude()} N")
+
+    # Test tension behavior (compression-only vs. tension-allowed)
+    print("\n--- Testing tension behavior (allow_tension=False, default) ---")
+    spring_compression_only = CoilSpring(
+        endpoint1=[0, 0, 0],
+        endpoint2=[0, 0, 100],
+        spring_rate=5.0,  # 5 kg/mm
+        preload_force=200.0,  # 200 N preload
+        unit='mm',
+        spring_rate_unit='kg/mm',
+        force_unit='N',
+        allow_tension=False  # Default: compression only
+    )
+    print(f"Initial: length={spring_compression_only.get_current_length():.1f} mm, "
+          f"force={spring_compression_only.get_reaction_force_magnitude():.1f} N")
+
+    # Extend by 50mm (force would be negative without clamping)
+    spring_compression_only.fit_to_attachment_targets([[0, 0, 0], [0, 0, 150]], unit='mm')
+    print(f"Extended 50mm: length={spring_compression_only.get_current_length():.1f} mm, "
+          f"force={spring_compression_only.get_reaction_force_magnitude():.1f} N (clamped to 0)")
+
+    print("\n--- Testing tension behavior (allow_tension=True) ---")
+    spring_with_tension = CoilSpring(
+        endpoint1=[0, 0, 0],
+        endpoint2=[0, 0, 100],
+        spring_rate=5.0,  # 5 kg/mm
+        preload_force=200.0,  # 200 N preload
+        unit='mm',
+        spring_rate_unit='kg/mm',
+        force_unit='N',
+        allow_tension=True  # Allow tension
+    )
+    print(f"Initial: length={spring_with_tension.get_current_length():.1f} mm, "
+          f"force={spring_with_tension.get_reaction_force_magnitude():.1f} N")
+
+    # Extend by 50mm (force will be negative)
+    spring_with_tension.fit_to_attachment_targets([[0, 0, 0], [0, 0, 150]], unit='mm')
+    print(f"Extended 50mm: length={spring_with_tension.get_current_length():.1f} mm, "
+          f"force={spring_with_tension.get_reaction_force_magnitude():.1f} N (negative = tension)")
 
     print("\n✓ All tests completed successfully!")
