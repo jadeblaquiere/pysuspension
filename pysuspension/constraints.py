@@ -1,0 +1,488 @@
+"""
+Constraint classes for suspension geometry solving.
+
+This module provides a constraint-based framework for solving suspension kinematics.
+Constraints can represent geometric relationships (distances, coincident points) with
+optional compliance modeling for realistic joint behavior.
+"""
+
+import numpy as np
+from abc import ABC, abstractmethod
+from enum import Enum
+from typing import Optional, List
+from attachment_point import AttachmentPoint
+
+
+class JointType(Enum):
+    """
+    Predefined joint types with typical stiffness characteristics.
+
+    Stiffness values represent translational stiffness in N/mm.
+    These are typical values and can be overridden with custom stiffness.
+    """
+    RIGID = "rigid"              # Welded, bolted - effectively infinite stiffness
+    BALL_JOINT = "ball_joint"    # Spherical bearing - very stiff
+    SPHERICAL_BEARING = "spherical_bearing"  # Similar to ball joint
+    BUSHING_HARD = "bushing_hard"    # Polyurethane bushing - moderate compliance
+    BUSHING_SOFT = "bushing_soft"    # Rubber bushing - high compliance
+    RUBBER_MOUNT = "rubber_mount"    # Engine mount style - very compliant
+    CUSTOM = "custom"            # User-defined compliance
+
+
+# Typical joint stiffness values (N/mm)
+# These represent translational stiffness of the joint
+JOINT_STIFFNESS = {
+    JointType.RIGID: 1e6,           # Essentially infinite (1,000,000 N/mm)
+    JointType.BALL_JOINT: 1e5,      # Very stiff (100,000 N/mm)
+    JointType.SPHERICAL_BEARING: 1e5,
+    JointType.BUSHING_HARD: 1e3,    # Moderate (1,000 N/mm)
+    JointType.BUSHING_SOFT: 100,    # Compliant (100 N/mm)
+    JointType.RUBBER_MOUNT: 10,     # Very compliant (10 N/mm)
+}
+
+
+class Constraint(ABC):
+    """
+    Base class for all constraints with compliance modeling.
+
+    Constraints define relationships between attachment points that must be
+    satisfied (or minimized) during solving. Each constraint has an associated
+    stiffness/compliance that affects how strictly it must be satisfied.
+
+    In weighted least-squares solving, the weight is proportional to stiffness:
+    - High stiffness → High weight → Must be satisfied closely
+    - Low stiffness → Low weight → Can deviate more (compliant)
+
+    The total error being minimized is:
+        E = Σ weight_i × error_i²
+
+    Which is equivalent to minimizing elastic energy in compliant joints.
+    """
+
+    def __init__(self,
+                 name: str,
+                 weight: float = 1.0,
+                 joint_type: JointType = JointType.RIGID,
+                 stiffness: Optional[float] = None,
+                 compliance: Optional[float] = None):
+        """
+        Initialize a constraint.
+
+        Args:
+            name: Constraint identifier
+            weight: Direct weight (if not using stiffness/compliance)
+            joint_type: Predefined joint type
+            stiffness: Joint stiffness in N/mm (overrides joint_type)
+            compliance: Joint compliance in mm/N (inverse of stiffness)
+
+        Priority order: stiffness > compliance > joint_type > weight
+        """
+        self.name = name
+        self.joint_type = joint_type
+
+        # Determine effective stiffness
+        if stiffness is not None:
+            self._stiffness = float(stiffness)
+        elif compliance is not None:
+            if compliance <= 0:
+                raise ValueError(f"Compliance must be positive, got {compliance}")
+            self._stiffness = 1.0 / compliance
+        elif joint_type != JointType.CUSTOM:
+            self._stiffness = JOINT_STIFFNESS[joint_type]
+        else:
+            # Use weight directly, interpret as normalized stiffness
+            self._stiffness = float(weight)
+
+        # Reference stiffness for normalization (1000 N/mm)
+        # This keeps weights in a reasonable range for numerical stability
+        self._stiffness_ref = 1e3
+
+        # Compute normalized weight for least-squares solving
+        self.weight = self._stiffness / self._stiffness_ref
+
+    @property
+    def stiffness(self) -> float:
+        """Get joint stiffness in N/mm."""
+        return self._stiffness
+
+    @property
+    def compliance(self) -> float:
+        """Get joint compliance in mm/N (inverse of stiffness)."""
+        return 1.0 / self._stiffness
+
+    @abstractmethod
+    def evaluate(self) -> float:
+        """
+        Evaluate constraint error (squared error).
+
+        Returns:
+            Squared error value (0 = perfectly satisfied)
+        """
+        pass
+
+    @abstractmethod
+    def get_involved_points(self) -> List[AttachmentPoint]:
+        """
+        Get all attachment points involved in this constraint.
+
+        Returns:
+            List of AttachmentPoint objects
+        """
+        pass
+
+    def get_physical_error(self) -> float:
+        """
+        Get the physical error magnitude (in mm for distance/position errors).
+
+        Returns:
+            RMS error in physical units
+        """
+        return np.sqrt(self.evaluate())
+
+    def get_weighted_error(self) -> float:
+        """
+        Get the weighted error used in optimization.
+
+        Returns:
+            weight × error²
+        """
+        return self.weight * self.evaluate()
+
+    def __repr__(self) -> str:
+        return (f"{self.__class__.__name__}('{self.name}', "
+                f"stiffness={self.stiffness:.1f} N/mm, "
+                f"weight={self.weight:.3f})")
+
+
+class GeometricConstraint(Constraint):
+    """
+    Base class for geometric constraints (positions, distances, angles).
+
+    Geometric constraints define spatial relationships between points
+    that must be maintained during kinematic solving.
+    """
+    pass
+
+
+class ForceConstraint(Constraint):
+    """
+    Base class for force equilibrium constraints (future implementation).
+
+    Force constraints ensure that forces on components are in equilibrium.
+    These will be used for static force-based solving.
+    """
+    pass
+
+
+class DistanceConstraint(GeometricConstraint):
+    """
+    Constraint to maintain a fixed distance between two points.
+
+    This is used for rigid suspension links, or flexible elements with
+    specified axial stiffness (like soft links or cables).
+
+    For rigid links: use joint_type=JointType.RIGID (default)
+    For flexible links: specify custom stiffness
+    """
+
+    def __init__(self,
+                 point1: AttachmentPoint,
+                 point2: AttachmentPoint,
+                 target_distance: float,
+                 name: Optional[str] = None,
+                 joint_type: JointType = JointType.RIGID,
+                 stiffness: Optional[float] = None):
+        """
+        Initialize a distance constraint.
+
+        Args:
+            point1: First endpoint
+            point2: Second endpoint
+            target_distance: Desired distance in mm
+            name: Constraint name (auto-generated if None)
+            joint_type: RIGID for solid links, CUSTOM for flexible
+            stiffness: For flexible links, axial stiffness in N/mm
+        """
+        if name is None:
+            name = f"distance_{point1.name}_{point2.name}"
+
+        super().__init__(name, joint_type=joint_type, stiffness=stiffness)
+        self.point1 = point1
+        self.point2 = point2
+        self.target_distance = float(target_distance)
+
+        if self.target_distance < 0:
+            raise ValueError(f"Target distance must be non-negative, got {target_distance}")
+
+    def evaluate(self) -> float:
+        """
+        Evaluate squared distance error.
+
+        Returns:
+            (current_distance - target_distance)²
+        """
+        current_distance = np.linalg.norm(
+            self.point2.position - self.point1.position
+        )
+        error = current_distance - self.target_distance
+        return error ** 2
+
+    def get_current_distance(self) -> float:
+        """Get current distance between points in mm."""
+        return np.linalg.norm(self.point2.position - self.point1.position)
+
+    def get_axial_force(self) -> float:
+        """
+        Compute axial force in link.
+
+        Returns:
+            Force in N (positive = tension, negative = compression)
+        """
+        current_distance = self.get_current_distance()
+        extension = current_distance - self.target_distance
+        return self.stiffness * extension
+
+    def get_force_vector(self) -> np.ndarray:
+        """
+        Compute force vector on point2.
+
+        Returns:
+            3D force vector in N
+        """
+        direction = self.point2.position - self.point1.position
+        current_distance = np.linalg.norm(direction)
+
+        if current_distance < 1e-9:
+            return np.zeros(3)
+
+        unit_direction = direction / current_distance
+        force_magnitude = self.get_axial_force()
+        return force_magnitude * unit_direction
+
+    def get_involved_points(self) -> List[AttachmentPoint]:
+        """Return both endpoints."""
+        return [self.point1, self.point2]
+
+    def __repr__(self) -> str:
+        return (f"DistanceConstraint('{self.name}', "
+                f"target={self.target_distance:.1f} mm, "
+                f"current={self.get_current_distance():.1f} mm, "
+                f"stiffness={self.stiffness:.1f} N/mm)")
+
+
+class FixedPointConstraint(GeometricConstraint):
+    """
+    Constraint to pin a point to fixed coordinates.
+
+    This is used for chassis mount points or other fixed attachment locations.
+    These are typically very stiff (effectively infinite stiffness).
+    """
+
+    def __init__(self,
+                 point: AttachmentPoint,
+                 target_position: np.ndarray,
+                 name: Optional[str] = None,
+                 joint_type: JointType = JointType.RIGID,
+                 stiffness: Optional[float] = None):
+        """
+        Initialize a fixed point constraint.
+
+        Args:
+            point: Point to be fixed
+            target_position: Target position in mm (3D array)
+            name: Constraint name (auto-generated if None)
+            joint_type: Usually RIGID for chassis mounts
+            stiffness: Custom stiffness in N/mm
+        """
+        if name is None:
+            name = f"fixed_{point.name}"
+
+        super().__init__(name, joint_type=joint_type, stiffness=stiffness)
+        self.point = point
+        self.target_position = np.array(target_position, dtype=float)
+
+        if self.target_position.shape != (3,):
+            raise ValueError(f"Target position must be 3D, got shape {self.target_position.shape}")
+
+    def evaluate(self) -> float:
+        """
+        Evaluate squared position error.
+
+        Returns:
+            Sum of squared position errors in all 3 dimensions
+        """
+        error = self.point.position - self.target_position
+        return np.sum(error ** 2)
+
+    def get_displacement(self) -> np.ndarray:
+        """
+        Get displacement vector from target position.
+
+        Returns:
+            3D displacement vector in mm
+        """
+        return self.point.position - self.target_position
+
+    def get_force(self) -> np.ndarray:
+        """
+        Compute reaction force at fixed point.
+
+        Returns:
+            3D force vector in N
+        """
+        displacement = self.get_displacement()
+        return self.stiffness * displacement
+
+    def get_involved_points(self) -> List[AttachmentPoint]:
+        """Return the fixed point."""
+        return [self.point]
+
+    def __repr__(self) -> str:
+        displacement = np.linalg.norm(self.get_displacement())
+        return (f"FixedPointConstraint('{self.name}', "
+                f"target={self.target_position}, "
+                f"displacement={displacement:.3f} mm, "
+                f"stiffness={self.stiffness:.1f} N/mm)")
+
+
+class CoincidentPointConstraint(GeometricConstraint):
+    """
+    Constraint requiring two points to be at the same location.
+
+    This is used for:
+    - Ball joints (very stiff)
+    - Bushings (moderate compliance)
+    - Rubber mounts (high compliance)
+
+    The joint_type or stiffness parameter determines how strictly
+    the coincidence must be maintained.
+    """
+
+    def __init__(self,
+                 point1: AttachmentPoint,
+                 point2: AttachmentPoint,
+                 name: Optional[str] = None,
+                 joint_type: JointType = JointType.BALL_JOINT,
+                 stiffness: Optional[float] = None):
+        """
+        Initialize a coincident point constraint.
+
+        Args:
+            point1: First point
+            point2: Second point (should coincide with first)
+            name: Constraint name (auto-generated if None)
+            joint_type: Type of joint (ball joint, bushing, etc.)
+            stiffness: Custom stiffness in N/mm (overrides joint_type)
+        """
+        if name is None:
+            name = f"coincident_{point1.name}_{point2.name}"
+
+        super().__init__(name, joint_type=joint_type, stiffness=stiffness)
+        self.point1 = point1
+        self.point2 = point2
+
+    def evaluate(self) -> float:
+        """
+        Evaluate squared distance between points.
+
+        Returns:
+            Sum of squared position errors in all 3 dimensions
+        """
+        error = self.point1.position - self.point2.position
+        return np.sum(error ** 2)
+
+    def get_separation(self) -> float:
+        """
+        Get distance between points in mm.
+
+        Returns:
+            Separation distance in mm
+        """
+        return np.linalg.norm(self.point2.position - self.point1.position)
+
+    def get_force(self) -> np.ndarray:
+        """
+        Compute force vector exerted by this joint.
+        Force = stiffness × displacement
+
+        Returns:
+            3D force vector in N (force on point2)
+        """
+        displacement = self.point2.position - self.point1.position
+        return self.stiffness * displacement
+
+    def get_involved_points(self) -> List[AttachmentPoint]:
+        """Return both points."""
+        return [self.point1, self.point2]
+
+    def __repr__(self) -> str:
+        separation = self.get_separation()
+        return (f"CoincidentPointConstraint('{self.name}', "
+                f"separation={separation:.3f} mm, "
+                f"joint_type={self.joint_type.value}, "
+                f"stiffness={self.stiffness:.1f} N/mm)")
+
+
+if __name__ == "__main__":
+    print("=" * 70)
+    print("CONSTRAINT FRAMEWORK TEST")
+    print("=" * 70)
+
+    # Create test attachment points
+    point1 = AttachmentPoint("point1", [0, 0, 0], unit='mm')
+    point2 = AttachmentPoint("point2", [100, 0, 0], unit='mm')
+    point3 = AttachmentPoint("point3", [100, 1, 0], unit='mm')
+
+    print("\n--- Testing DistanceConstraint (Rigid Link) ---")
+    dist_constraint = DistanceConstraint(
+        point1, point2,
+        target_distance=100.0,
+        joint_type=JointType.RIGID
+    )
+    print(dist_constraint)
+    print(f"Error: {dist_constraint.evaluate():.6f} mm²")
+    print(f"Physical error: {dist_constraint.get_physical_error():.6f} mm")
+    print(f"Weight: {dist_constraint.weight:.1f}")
+
+    print("\n--- Testing CoincidentPointConstraint (Ball Joint) ---")
+    coincident_constraint = CoincidentPointConstraint(
+        point2, point3,
+        joint_type=JointType.BALL_JOINT
+    )
+    print(coincident_constraint)
+    print(f"Error: {coincident_constraint.evaluate():.6f} mm²")
+    print(f"Separation: {coincident_constraint.get_separation():.6f} mm")
+    print(f"Force: {coincident_constraint.get_force()} N")
+
+    print("\n--- Testing CoincidentPointConstraint (Soft Bushing) ---")
+    bushing_constraint = CoincidentPointConstraint(
+        point2, point3,
+        joint_type=JointType.BUSHING_SOFT
+    )
+    print(bushing_constraint)
+    print(f"Stiffness: {bushing_constraint.stiffness:.1f} N/mm")
+    print(f"Compliance: {bushing_constraint.compliance:.6f} mm/N")
+    print(f"Weight (relative to ball joint): {bushing_constraint.weight / coincident_constraint.weight:.3f}")
+
+    print("\n--- Testing FixedPointConstraint ---")
+    fixed_constraint = FixedPointConstraint(
+        point1,
+        target_position=[0, 0, 0],
+        joint_type=JointType.RIGID
+    )
+    print(fixed_constraint)
+    print(f"Error: {fixed_constraint.evaluate():.6f} mm²")
+
+    print("\n--- Testing Compliance Effects ---")
+    print("Moving point3 by 2mm in Y direction...")
+    point3.set_position([100, 2, 0], unit='mm')
+
+    print(f"\nBall joint (stiff):")
+    print(f"  Separation: {CoincidentPointConstraint(point2, point3, joint_type=JointType.BALL_JOINT).get_separation():.3f} mm")
+    print(f"  Force: {np.linalg.norm(CoincidentPointConstraint(point2, point3, joint_type=JointType.BALL_JOINT).get_force()):.1f} N")
+
+    print(f"\nSoft bushing (compliant):")
+    print(f"  Separation: {CoincidentPointConstraint(point2, point3, joint_type=JointType.BUSHING_SOFT).get_separation():.3f} mm")
+    print(f"  Force: {np.linalg.norm(CoincidentPointConstraint(point2, point3, joint_type=JointType.BUSHING_SOFT).get_force()):.1f} N")
+
+    print("\n✓ All constraint tests completed successfully!")
