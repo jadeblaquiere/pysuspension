@@ -1,7 +1,7 @@
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Union, Tuple, List, Optional, TYPE_CHECKING
-from units import to_mm, from_mm
+from .units import to_mm, from_mm
 
 if TYPE_CHECKING:
     from typing import Set

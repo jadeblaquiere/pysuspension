@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Tuple, Union
-from attachment_point import AttachmentPoint
-from units import to_mm, from_mm, to_kg, from_kg, to_kg_per_mm, from_kg_per_mm
+from .attachment_point import AttachmentPoint
+from .units import to_mm, from_mm, to_kg, from_kg, to_kg_per_mm, from_kg_per_mm
 
 
 class CoilSpring:
