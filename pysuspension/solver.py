@@ -253,10 +253,12 @@ class SuspensionSolver:
 
         # Solve using specified method
         if solve_method == 'least-squares':
+            # Use 'trf' (Trust Region Reflective) - handles both over and under-constrained
+            # 'lm' (Levenberg-Marquardt) only works for over-constrained systems
             result = optimize.least_squares(
                 self._residual_vector,
                 x0,
-                method='lm',  # Levenberg-Marquardt
+                method='trf',  # Trust Region Reflective - handles any constraint level
                 max_nfev=self.max_iterations,
                 ftol=self.tolerance,
                 xtol=self.tolerance,
