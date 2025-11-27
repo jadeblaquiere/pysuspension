@@ -21,9 +21,9 @@ except ImportError:
     SCIPY_AVAILABLE = False
     print("Warning: scipy not available. Solver will not function.")
     print("Install with: pip install scipy")
-from constraints import Constraint, GeometricConstraint
-from solver_state import SolverState, DOFSpecification
-from attachment_point import AttachmentPoint
+from .constraints import Constraint, GeometricConstraint
+from .solver_state import SolverState, DOFSpecification
+from .attachment_point import AttachmentPoint
 
 
 class SolverResult:
@@ -66,7 +66,7 @@ class SolverResult:
 
     def get_position(self, point_name: str, unit: str = 'mm') -> np.ndarray:
         """Get final position of a point."""
-        from units import from_mm
+        from .units import from_mm
         if point_name not in self.positions:
             raise ValueError(f"Point '{point_name}' not found in results")
         return from_mm(self.positions[point_name].copy(), unit)

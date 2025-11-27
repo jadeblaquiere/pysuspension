@@ -3,11 +3,11 @@ Integrated test demonstrating all suspension components working together.
 Now with full unit support - all internal calculations in millimeters (mm).
 """
 import numpy as np
-from suspension_knuckle import SuspensionKnuckle
-from suspension_link import SuspensionLink
-from control_arm import ControlArm
-from chassis import Chassis
-from units import from_mm
+from .suspension_knuckle import SuspensionKnuckle
+from .suspension_link import SuspensionLink
+from .control_arm import ControlArm
+from .chassis import Chassis
+from .units import from_mm
 
 
 def main():

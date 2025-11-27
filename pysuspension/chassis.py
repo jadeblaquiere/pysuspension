@@ -1,8 +1,8 @@
 import numpy as np
 from typing import List, Tuple, Union, Dict
-from units import to_mm, from_mm, to_kg
-from chassis_corner import ChassisCorner
-from chassis_axle import ChassisAxle
+from .units import to_mm, from_mm, to_kg
+from .chassis_corner import ChassisCorner
+from .chassis_axle import ChassisAxle
 
 
 class Chassis:

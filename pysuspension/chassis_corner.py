@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Tuple, Union, Optional
-from attachment_point import AttachmentPoint
-from units import to_mm, from_mm
+from .attachment_point import AttachmentPoint
+from .units import to_mm, from_mm
 
 
 class ChassisCorner:

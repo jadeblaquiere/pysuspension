@@ -1,8 +1,8 @@
 import numpy as np
 from typing import List, Tuple, Union, Optional
-from suspension_link import SuspensionLink
-from attachment_point import AttachmentPoint
-from units import to_mm, from_mm, to_kg
+from .suspension_link import SuspensionLink
+from .attachment_point import AttachmentPoint
+from .units import to_mm, from_mm, to_kg
 
 
 class ControlArm:

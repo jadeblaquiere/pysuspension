@@ -9,7 +9,7 @@ optimization vectors.
 
 import numpy as np
 from typing import Dict, Set, List, Tuple, Optional
-from attachment_point import AttachmentPoint
+from .attachment_point import AttachmentPoint
 
 
 class SolverState:

@@ -10,7 +10,7 @@ import numpy as np
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Optional, List
-from attachment_point import AttachmentPoint
+from .attachment_point import AttachmentPoint
 
 
 class JointType(Enum):

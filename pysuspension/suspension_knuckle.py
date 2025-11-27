@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Tuple, Optional, Union
-from attachment_point import AttachmentPoint
-from units import to_mm, from_mm, to_kg
+from .attachment_point import AttachmentPoint
+from .units import to_mm, from_mm, to_kg
 
 
 class SuspensionKnuckle:
