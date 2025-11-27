@@ -423,6 +423,168 @@ class CoincidentPointConstraint(GeometricConstraint):
                 f"stiffness={self.stiffness:.1f} N/mm)")
 
 
+class PartialPositionConstraint(GeometricConstraint):
+    """
+    Constraint that fixes one or more dimensions (axes) of a point position.
+
+    This allows constraining specific axes while leaving others free to move.
+    Very useful for suspension analysis:
+    - Fix Z (vertical) to simulate specific wheel height
+    - Fix X, Y to constrain lateral position
+    - Any combination of axes
+
+    Example use cases:
+    - Solve suspension with wheel raised 25mm (fix Z, free X/Y)
+    - Constrain motion to a plane (fix one axis)
+    - Multi-axis positioning (fix any combination)
+    """
+
+    # Axis name to index mapping
+    AXIS_MAP = {'x': 0, 'y': 1, 'z': 2}
+
+    def __init__(self,
+                 point: AttachmentPoint,
+                 target_position: np.ndarray,
+                 constrain_axes: List[str],
+                 name: Optional[str] = None,
+                 joint_type: JointType = JointType.RIGID,
+                 stiffness: Optional[float] = None):
+        """
+        Initialize a partial position constraint.
+
+        Args:
+            point: Point to be constrained
+            target_position: Target position in mm (3D array)
+            constrain_axes: List of axes to constrain: ['x'], ['y'], ['z'],
+                           ['x', 'y'], ['x', 'z'], ['y', 'z'], or ['x', 'y', 'z']
+            name: Constraint name (auto-generated if None)
+            joint_type: Usually RIGID for hard constraints
+            stiffness: Custom stiffness in N/mm
+
+        Examples:
+            # Fix only vertical position (wheel height)
+            PartialPositionConstraint(wheel_center, [0, 0, 350], ['z'])
+
+            # Fix X and Y, allow Z to vary
+            PartialPositionConstraint(point, [100, 200, 0], ['x', 'y'])
+
+            # Fix all (equivalent to FixedPointConstraint)
+            PartialPositionConstraint(point, [100, 200, 300], ['x', 'y', 'z'])
+        """
+        if name is None:
+            axes_str = '_'.join(sorted(constrain_axes))
+            name = f"partial_{point.name}_{axes_str}"
+
+        super().__init__(name, joint_type=joint_type, stiffness=stiffness)
+        self.point = point
+        self.target_position = np.array(target_position, dtype=float)
+
+        if self.target_position.shape != (3,):
+            raise ValueError(f"Target position must be 3D, got shape {self.target_position.shape}")
+
+        # Validate and store constrained axes
+        self.constrain_axes = []
+        for axis in constrain_axes:
+            axis_lower = axis.lower()
+            if axis_lower not in self.AXIS_MAP:
+                raise ValueError(f"Invalid axis '{axis}'. Must be 'x', 'y', or 'z'")
+            self.constrain_axes.append(axis_lower)
+
+        if not self.constrain_axes:
+            raise ValueError("Must constrain at least one axis")
+
+        # Remove duplicates and sort for consistency
+        self.constrain_axes = sorted(list(set(self.constrain_axes)))
+
+        # Create mask for constrained axes
+        self.axis_mask = np.zeros(3, dtype=bool)
+        for axis in self.constrain_axes:
+            self.axis_mask[self.AXIS_MAP[axis]] = True
+
+        # Create index array for constrained axes
+        self.constrained_indices = [self.AXIS_MAP[axis] for axis in self.constrain_axes]
+
+    def evaluate(self) -> float:
+        """
+        Evaluate squared position error for constrained axes only.
+
+        Returns:
+            Sum of squared position errors in constrained dimensions
+        """
+        error = self.point.position - self.target_position
+        # Only include error from constrained axes
+        constrained_error = error[self.axis_mask]
+        return np.sum(constrained_error ** 2)
+
+    def get_displacement(self) -> np.ndarray:
+        """
+        Get displacement vector from target position (all axes).
+
+        Returns:
+            3D displacement vector in mm
+        """
+        return self.point.position - self.target_position
+
+    def get_constrained_displacement(self) -> np.ndarray:
+        """
+        Get displacement only for constrained axes.
+
+        Returns:
+            Array of displacements for constrained axes only
+        """
+        displacement = self.get_displacement()
+        return displacement[self.axis_mask]
+
+    def get_force(self) -> np.ndarray:
+        """
+        Compute reaction force at point (only on constrained axes).
+
+        Returns:
+            3D force vector in N (zero on unconstrained axes)
+        """
+        force = np.zeros(3)
+        displacement = self.get_displacement()
+        # Apply force only on constrained axes
+        force[self.axis_mask] = self.stiffness * displacement[self.axis_mask]
+        return force
+
+    def get_involved_points(self) -> List[AttachmentPoint]:
+        """Return the constrained point."""
+        return [self.point]
+
+    def is_axis_constrained(self, axis: str) -> bool:
+        """
+        Check if a specific axis is constrained.
+
+        Args:
+            axis: 'x', 'y', or 'z'
+
+        Returns:
+            True if axis is constrained
+        """
+        return axis.lower() in self.constrain_axes
+
+    def get_free_axes(self) -> List[str]:
+        """
+        Get list of axes that are NOT constrained.
+
+        Returns:
+            List of free axis names
+        """
+        all_axes = ['x', 'y', 'z']
+        return [axis for axis in all_axes if axis not in self.constrain_axes]
+
+    def __repr__(self) -> str:
+        displacement = self.get_constrained_displacement()
+        axes_str = ', '.join(self.constrain_axes)
+        rms_error = np.sqrt(np.mean(displacement ** 2)) if len(displacement) > 0 else 0.0
+        return (f"PartialPositionConstraint('{self.name}', "
+                f"axes=[{axes_str}], "
+                f"target={self.target_position[self.axis_mask]}, "
+                f"error={rms_error:.3f} mm, "
+                f"stiffness={self.stiffness:.1f} N/mm)")
+
+
 if __name__ == "__main__":
     print("=" * 70)
     print("CONSTRAINT FRAMEWORK TEST")
@@ -484,5 +646,43 @@ if __name__ == "__main__":
     print(f"\nSoft bushing (compliant):")
     print(f"  Separation: {CoincidentPointConstraint(point2, point3, joint_type=JointType.BUSHING_SOFT).get_separation():.3f} mm")
     print(f"  Force: {np.linalg.norm(CoincidentPointConstraint(point2, point3, joint_type=JointType.BUSHING_SOFT).get_force()):.1f} N")
+
+    print("\n--- Testing PartialPositionConstraint ---")
+    # Create a wheel center point
+    wheel_center = AttachmentPoint("wheel_center", [1500, 750, 350], unit='mm')
+
+    # Constrain only Z (vertical) - useful for wheel travel analysis
+    z_constraint = PartialPositionConstraint(
+        wheel_center,
+        target_position=[0, 0, 375],  # Only Z=375 matters
+        constrain_axes=['z'],
+        joint_type=JointType.RIGID
+    )
+    print(f"\nConstrain only Z (wheel height):")
+    print(z_constraint)
+    print(f"  Constrained axes: {z_constraint.constrain_axes}")
+    print(f"  Free axes: {z_constraint.get_free_axes()}")
+    print(f"  Error (Z only): {z_constraint.evaluate():.6f} mm²")
+    print(f"  Physical error (Z): {z_constraint.get_physical_error():.6f} mm")
+    print(f"  Force: {z_constraint.get_force()} N (only Z component)")
+
+    # Constrain X and Y, leave Z free
+    xy_constraint = PartialPositionConstraint(
+        wheel_center,
+        target_position=[1500, 750, 0],  # Only X, Y matter
+        constrain_axes=['x', 'y'],
+        joint_type=JointType.RIGID
+    )
+    print(f"\nConstrain X and Y (lateral position):")
+    print(xy_constraint)
+    print(f"  Constrained axes: {xy_constraint.constrain_axes}")
+    print(f"  Free axes: {xy_constraint.get_free_axes()}")
+    print(f"  Error (X,Y only): {xy_constraint.evaluate():.6f} mm²")
+
+    # Move wheel and check
+    wheel_center.set_position([1500, 750, 400], unit='mm')  # Changed Z from 350 to 400
+    print(f"\nAfter moving wheel to Z=400mm:")
+    print(f"  Z constraint error: {z_constraint.get_physical_error():.3f} mm (should be 25mm)")
+    print(f"  XY constraint error: {xy_constraint.get_physical_error():.3f} mm (should be 0mm)")
 
     print("\n✓ All constraint tests completed successfully!")
