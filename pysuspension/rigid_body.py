@@ -12,6 +12,7 @@ import numpy as np
 from typing import List, Tuple, Union, Optional
 from .attachment_point import AttachmentPoint
 from .units import to_mm, from_mm, to_kg
+from .joint_types import JointType, JOINT_STIFFNESS
 
 
 class RigidBody:
@@ -200,11 +201,12 @@ class RigidBody:
                                   target_positions: List[Union[np.ndarray, Tuple[float, float, float]]],
                                   unit: str = 'mm') -> float:
         """
-        Fit the rigid body to target attachment positions using SVD-based transformation.
+        Fit the rigid body to target attachment positions using weighted SVD-based transformation.
 
-        Uses the Kabsch algorithm to find the optimal rotation and translation that
-        minimizes RMS error between current and target positions. Updates all attachment
-        point positions and center of mass based on the optimal rigid body fit.
+        Uses the Kabsch algorithm with joint stiffness weighting to find the optimal rotation
+        and translation. Stiffer joints (like ball joints, welds) have higher weight and thus
+        less error tolerance, while compliant joints (like soft bushings) have lower weight
+        and can absorb more geometric mismatch.
 
         The center of mass moves as a rigid body with the attachment points.
 
@@ -213,7 +215,7 @@ class RigidBody:
             unit: Unit of input target positions (default: 'mm')
 
         Returns:
-            RMS error of the fit (in mm)
+            Weighted RMS error of the fit (in mm)
 
         Raises:
             ValueError: If wrong number of target positions or fewer than 3 points
@@ -233,16 +235,31 @@ class RigidBody:
         current_points = np.array(current_positions)
         target_points = np.array([to_mm(np.array(p, dtype=float), unit) for p in target_positions])
 
-        # Compute centroids
-        centroid_current = np.mean(current_points, axis=0)
-        centroid_target = np.mean(target_points, axis=0)
+        # Get joint stiffness for each attachment point
+        stiffness_weights = []
+        for ap in self.attachment_points:
+            if ap.joint is not None:
+                stiffness = JOINT_STIFFNESS[ap.joint.joint_type]
+            else:
+                stiffness = JOINT_STIFFNESS[JointType.RIGID]  # Default to rigid if no joint
+            stiffness_weights.append(stiffness)
+        stiffness_weights = np.array(stiffness_weights)
+        total_weight = np.sum(stiffness_weights)
+
+        # Compute weighted centroids
+        centroid_current = np.sum(current_points * stiffness_weights[:, np.newaxis], axis=0) / total_weight
+        centroid_target = np.sum(target_points * stiffness_weights[:, np.newaxis], axis=0) / total_weight
 
         # Center the point sets
         current_centered = current_points - centroid_current
         target_centered = target_points - centroid_target
 
-        # Compute the cross-covariance matrix H
-        H = current_centered.T @ target_centered
+        # Compute weighted cross-covariance matrix H
+        # Weight by sqrt(stiffness) so that when we compute H = weighted_current.T @ weighted_target,
+        # each point contributes proportional to its stiffness
+        weighted_current = current_centered * np.sqrt(stiffness_weights[:, np.newaxis])
+        weighted_target = target_centered * np.sqrt(stiffness_weights[:, np.newaxis])
+        H = weighted_current.T @ weighted_target
 
         # Singular Value Decomposition (Kabsch algorithm)
         U, S, Vt = np.linalg.svd(H)
@@ -261,12 +278,13 @@ class RigidBody:
         # Apply transformation to all attachment points and center of mass
         self._apply_transformation(R, t)
 
-        # Calculate RMS error
+        # Calculate weighted RMS error
         transformed_points = (R @ current_points.T).T + t
         errors = target_points - transformed_points
-        rms_error = np.sqrt(np.mean(np.sum(errors**2, axis=1)))
+        squared_errors = np.sum(errors**2, axis=1)
+        weighted_rms_error = np.sqrt(np.sum(stiffness_weights * squared_errors) / total_weight)
 
-        return rms_error
+        return weighted_rms_error
 
     def _apply_transformation(self, R: np.ndarray, t: np.ndarray) -> None:
         """
