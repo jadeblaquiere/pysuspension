@@ -173,9 +173,6 @@ class AttachmentPoint:
         Note: Joint connections are not restored here. The parent component should handle
         reconstructing joint connections using the joint_name field if present.
 
-        For backward compatibility, if an old 'joint_type' field is present, it is ignored.
-        Joint information should now be stored in SuspensionJoint objects.
-
         Args:
             data: Dictionary containing attachment point data
             parent_component: Optional parent component to associate with this point
