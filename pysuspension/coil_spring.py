@@ -1,12 +1,16 @@
 import numpy as np
 from typing import List, Tuple, Union
+from .suspension_link import SuspensionLink
 from .attachment_point import AttachmentPoint
 from .units import to_mm, from_mm, to_kg, from_kg, to_kg_per_mm, from_kg_per_mm
 
 
-class CoilSpring:
+class CoilSpring(SuspensionLink):
     """
     Represents a coil spring with two attachment points, mass, spring rate, and preload.
+
+    Extends SuspensionLink to model a spring as a variable-length link with force characteristics.
+    The inherited `self.length` property represents the **free length** (uncompressed length).
 
     All positions are stored internally in millimeters (mm).
     Spring rate is stored internally in kg/mm (kilogram-force per millimeter).
@@ -26,10 +30,11 @@ class CoilSpring:
     negative forces (tension).
 
     The spring has:
-    - Two attachment points (endpoints)
+    - Two attachment points (endpoints) - inherited from SuspensionLink
+    - Free length (self.length from parent) - the uncompressed length
+    - Current length (self.current_length) - the actual distance between endpoints
     - Spring rate (stiffness)
-    - Initial length (distance between endpoints at construction)
-    - Preload force (reaction force at initial length, positive for compression)
+    - Preload force (reaction force at free length, positive for compression)
     - Mass (concentrated at the centroid)
     - Reaction force that varies linearly with length change
     - Optional tension behavior (default: compression only)
@@ -54,7 +59,7 @@ class CoilSpring:
             endpoint1: 3D position of first endpoint [x, y, z] or AttachmentPoint
             endpoint2: 3D position of second endpoint [x, y, z] or AttachmentPoint
             spring_rate: Spring rate (stiffness)
-            preload_force: Preload force at initial length (default: 0.0)
+            preload_force: Preload force at free length (default: 0.0)
             mass: Mass of the spring (default: 0.0)
             name: Identifier for the spring
             unit: Unit of input positions (default: 'mm')
@@ -63,42 +68,8 @@ class CoilSpring:
             mass_unit: Unit of mass input (default: 'kg')
             allow_tension: Allow negative reaction forces/tension (default: False)
         """
-        self.name = name
-
-        # Create AttachmentPoint objects if not provided
-        if isinstance(endpoint1, AttachmentPoint):
-            self.endpoint1 = endpoint1
-        else:
-            endpoint1_array = np.array(endpoint1, dtype=float)
-            if endpoint1_array.shape != (3,):
-                raise ValueError("Endpoint1 must be a 3-element array [x, y, z]")
-            self.endpoint1 = AttachmentPoint(
-                name=f"{name}_endpoint1",
-                position=endpoint1_array,
-                is_relative=False,
-                unit=unit,
-                parent_component=self
-            )
-
-        if isinstance(endpoint2, AttachmentPoint):
-            self.endpoint2 = endpoint2
-        else:
-            endpoint2_array = np.array(endpoint2, dtype=float)
-            if endpoint2_array.shape != (3,):
-                raise ValueError("Endpoint2 must be a 3-element array [x, y, z]")
-            self.endpoint2 = AttachmentPoint(
-                name=f"{name}_endpoint2",
-                position=endpoint2_array,
-                is_relative=False,
-                unit=unit,
-                parent_component=self
-            )
-
-        # Calculate initial length (constant, in mm)
-        self.initial_length = np.linalg.norm(self.endpoint2.position - self.endpoint1.position)
-
-        if self.initial_length < 1e-6:
-            raise ValueError("Spring endpoints are too close together (zero length)")
+        # Store spring-specific properties BEFORE calling parent __init__
+        # (parent's __init__ will call _update_local_frame which needs these)
 
         # Store spring rate in kg/mm (kgf/mm)
         self.spring_rate = to_kg_per_mm(spring_rate, spring_rate_unit)
@@ -120,8 +91,16 @@ class CoilSpring:
         # Store tension behavior flag
         self.allow_tension = allow_tension
 
-        # Calculate spring properties in local frame
-        self._update_local_frame()
+        # Initialize current_length (will be set properly by _update_local_frame)
+        self.current_length = 0.0
+
+        # Initialize parent SuspensionLink
+        # Note: parent's self.length becomes the free length (uncompressed length)
+        # Parent's __init__ will call our overridden _update_local_frame()
+        super().__init__(endpoint1, endpoint2, name, unit)
+
+        # Alias for clarity: initial_length = free length (from parent)
+        self.initial_length = self.length
 
         # Store original state for reset
         self._original_state = {
@@ -132,23 +111,34 @@ class CoilSpring:
         }
 
     def _update_local_frame(self):
-        """Update the local coordinate frame of the spring."""
-        # Current length
+        """
+        Update the local coordinate frame of the spring and calculate reaction force.
+
+        Overrides parent method to add spring-specific force calculations.
+        The parent method updates axis and center based on current endpoint positions.
+        This method extends it to calculate current length, length change, and reaction force.
+        """
+        # Call parent to update axis and center
+        # Note: Parent uses self.length (free length) for axis calculation,
+        # but we need to recalculate using current actual length
+        super()._update_local_frame()
+
+        # Recalculate current length (actual distance between endpoints)
         self.current_length = np.linalg.norm(self.endpoint2.position - self.endpoint1.position)
 
-        # Spring axis (unit vector from endpoint1 to endpoint2)
+        # Update axis using current length (not free length)
         if self.current_length > 1e-6:
             self.axis = (self.endpoint2.position - self.endpoint1.position) / self.current_length
         else:
             self.axis = np.array([0, 0, 1], dtype=float)  # Default direction if collapsed
 
-        # Spring center (centroid) - this is where the mass is located
+        # Update center (already done by parent, but ensure consistency)
         self.center = (self.endpoint1.position + self.endpoint2.position) / 2.0
         self.center_of_mass = self.center.copy()
 
-        # Calculate length change from initial
+        # Calculate length change from free length (self.length)
         # Sign convention: negative = compression, positive = extension
-        self.length_change = self.current_length - self.initial_length
+        self.length_change = self.current_length - self.length  # self.length is free length
 
         # Calculate current reaction force
         # Force = preload - spring_rate * length_change
@@ -167,90 +157,47 @@ class CoilSpring:
         # Positive force (compression) pushes outward, negative force (tension) pulls inward
         self.reaction_force = -self.reaction_force_magnitude * self.axis
 
-    def get_endpoint1(self, unit: str = 'mm') -> np.ndarray:
+    def fit_to_attachment_targets(self, target_positions: List[Union[np.ndarray, Tuple[float, float, float]]],
+                                   unit: str = 'mm') -> float:
         """
-        Get the position of the first endpoint.
+        Fit the spring to target endpoint positions.
+
+        Unlike the parent SuspensionLink which maintains constant length, this method
+        allows the spring length to change (compress or extend). The spring is positioned
+        to match the target positions exactly, and the reaction force is recalculated.
 
         Args:
-            unit: Unit for output (default: 'mm')
+            target_positions: List of two target positions [target_endpoint1, target_endpoint2]
+            unit: Unit of input target positions (default: 'mm')
 
         Returns:
-            Position in specified unit
+            RMS error (should be near zero since we match exactly)
         """
-        return self.endpoint1.get_position(unit)
+        if len(target_positions) != 2:
+            raise ValueError("Expected list of 2 target endpoints")
 
-    def get_endpoint2(self, unit: str = 'mm') -> np.ndarray:
-        """
-        Get the position of the second endpoint.
+        target1 = to_mm(np.array(target_positions[0], dtype=float), unit)
+        target2 = to_mm(np.array(target_positions[1], dtype=float), unit)
 
-        Args:
-            unit: Unit for output (default: 'mm')
+        # Set endpoints to exact target positions (allows length change)
+        self.endpoint1.set_position(target1, unit='mm')
+        self.endpoint2.set_position(target2, unit='mm')
 
-        Returns:
-            Position in specified unit
-        """
-        return self.endpoint2.get_position(unit)
+        # Update geometry (this will recalculate length, reaction force, etc.)
+        self._update_local_frame()
 
-    def get_endpoints(self, unit: str = 'mm') -> List[np.ndarray]:
-        """
-        Get both endpoint positions as a list.
+        # Calculate RMS error (should be near zero)
+        error1 = target1 - self.endpoint1.position
+        error2 = target2 - self.endpoint2.position
+        rms_error = np.sqrt((np.sum(error1**2) + np.sum(error2**2)) / 2.0)
 
-        Args:
-            unit: Unit for output (default: 'mm')
+        return rms_error
 
-        Returns:
-            List of positions in specified unit
-        """
-        return [self.endpoint1.get_position(unit), self.endpoint2.get_position(unit)]
-
-    def get_all_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
-        """
-        Get all attachment point positions (both endpoints).
-
-        Args:
-            unit: Unit for output (default: 'mm')
-
-        Returns:
-            List of attachment positions in specified unit
-        """
-        return self.get_endpoints(unit)
-
-    def get_center(self, unit: str = 'mm') -> np.ndarray:
-        """
-        Get the center point of the spring (centroid, where mass is located).
-
-        Args:
-            unit: Unit for output (default: 'mm')
-
-        Returns:
-            Position in specified unit
-        """
-        return from_mm(self.center.copy(), unit)
-
-    def get_center_of_mass(self, unit: str = 'mm') -> np.ndarray:
-        """
-        Get the center of mass position (same as center for a spring).
-
-        Args:
-            unit: Unit for output (default: 'mm')
-
-        Returns:
-            3D position vector in specified unit
-        """
-        return from_mm(self.center_of_mass.copy(), unit)
-
-    def get_axis(self) -> np.ndarray:
-        """
-        Get the unit vector along the spring axis (from endpoint1 to endpoint2).
-
-        Returns:
-            Unit vector (dimensionless)
-        """
-        return self.axis.copy()
+    # Spring-specific getter methods
 
     def get_current_length(self, unit: str = 'mm') -> float:
         """
-        Get the current length of the spring.
+        Get the current length of the spring (actual distance between endpoints).
 
         Args:
             unit: Unit for output (default: 'mm')
@@ -262,7 +209,9 @@ class CoilSpring:
 
     def get_initial_length(self, unit: str = 'mm') -> float:
         """
-        Get the initial length of the spring (at construction).
+        Get the initial/free length of the spring (uncompressed length).
+
+        This is an alias for get_length() from the parent class.
 
         Args:
             unit: Unit for output (default: 'mm')
@@ -274,7 +223,10 @@ class CoilSpring:
 
     def get_length_change(self, unit: str = 'mm') -> float:
         """
-        Get the change in length from initial (negative = compression, positive = extension).
+        Get the change in length from free length.
+
+        Negative = compression (spring gets shorter)
+        Positive = extension (spring gets longer)
 
         Args:
             unit: Unit for output (default: 'mm')
@@ -286,7 +238,7 @@ class CoilSpring:
 
     def get_spring_rate(self, unit: str = 'kg/mm') -> float:
         """
-        Get the spring rate.
+        Get the spring rate (stiffness).
 
         Args:
             unit: Unit for output (default: 'kg/mm')
@@ -298,7 +250,7 @@ class CoilSpring:
 
     def get_preload_force(self, unit: str = 'N') -> float:
         """
-        Get the preload force (force at initial length).
+        Get the preload force (force at free length).
 
         Args:
             unit: Unit for output (default: 'N')
@@ -311,6 +263,9 @@ class CoilSpring:
     def get_reaction_force_magnitude(self, unit: str = 'N') -> float:
         """
         Get the magnitude of the current reaction force.
+
+        Positive = compression (spring pushes outward)
+        Negative = tension (spring pulls inward, only if allow_tension=True)
 
         Args:
             unit: Unit for output (default: 'N')
@@ -332,6 +287,58 @@ class CoilSpring:
         """
         magnitude_in_unit = self._convert_force(self.reaction_force_magnitude, 'N', unit)
         return -magnitude_in_unit * self.axis
+
+    def get_center_of_mass(self, unit: str = 'mm') -> np.ndarray:
+        """
+        Get the center of mass position (same as center for a spring).
+
+        Overrides parent to return center_of_mass specifically.
+
+        Args:
+            unit: Unit for output (default: 'mm')
+
+        Returns:
+            3D position vector in specified unit
+        """
+        return from_mm(self.center_of_mass.copy(), unit)
+
+    def get_all_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
+        """
+        Get all attachment point positions (both endpoints).
+
+        Args:
+            unit: Unit for output (default: 'mm')
+
+        Returns:
+            List of attachment positions in specified unit
+        """
+        return self.get_endpoints(unit)
+
+    # Spring-specific setter methods
+
+    def set_preload_force(self, preload_force: float, unit: str = 'N'):
+        """
+        Set the preload force.
+
+        Args:
+            preload_force: New preload force
+            unit: Unit of input force (default: 'N')
+        """
+        self.preload_force = self._convert_force(preload_force, unit, 'N')
+        self._update_local_frame()
+
+    def set_spring_rate(self, spring_rate: float, unit: str = 'kg/mm'):
+        """
+        Set the spring rate.
+
+        Args:
+            spring_rate: New spring rate
+            unit: Unit of input spring rate (default: 'kg/mm')
+        """
+        self.spring_rate = to_kg_per_mm(spring_rate, unit)
+        self._update_local_frame()
+
+    # Utility methods
 
     def _convert_force(self, value: float, from_unit: str, to_unit: str) -> float:
         """Convert force between units."""
@@ -358,39 +365,6 @@ class CoilSpring:
         else:
             raise ValueError(f"Unknown force unit '{to_unit}'")
 
-    def fit_to_attachment_targets(self, target_positions: List[Union[np.ndarray, Tuple[float, float, float]]],
-                                   unit: str = 'mm') -> float:
-        """
-        Fit the spring to target endpoint positions.
-        Updates the spring position to match exact target positions, changing the spring length.
-
-        Args:
-            target_positions: List of two target positions [target_endpoint1, target_endpoint2]
-            unit: Unit of input target positions (default: 'mm')
-
-        Returns:
-            RMS error (should be near zero since we match exactly)
-        """
-        if len(target_positions) != 2:
-            raise ValueError("Expected list of 2 target endpoints")
-
-        target1 = to_mm(np.array(target_positions[0], dtype=float), unit)
-        target2 = to_mm(np.array(target_positions[1], dtype=float), unit)
-
-        # Set endpoints to exact target positions
-        self.endpoint1.set_position(target1, unit='mm')
-        self.endpoint2.set_position(target2, unit='mm')
-
-        # Update geometry (this will recalculate length, reaction force, etc.)
-        self._update_local_frame()
-
-        # Calculate RMS error (should be near zero)
-        error1 = target1 - self.endpoint1.position
-        error2 = target2 - self.endpoint2.position
-        rms_error = np.sqrt((np.sum(error1**2) + np.sum(error2**2)) / 2.0)
-
-        return rms_error
-
     def reset_to_origin(self) -> None:
         """
         Reset the spring to its originally defined position.
@@ -398,6 +372,8 @@ class CoilSpring:
         self.endpoint1.set_position(self._original_state['endpoint1'], unit='mm')
         self.endpoint2.set_position(self._original_state['endpoint2'], unit='mm')
         self._update_local_frame()
+
+    # Serialization methods
 
     def to_dict(self) -> dict:
         """
@@ -467,7 +443,7 @@ class CoilSpring:
                 f"  endpoint1={self.endpoint1.position} mm,\n"
                 f"  endpoint2={self.endpoint2.position} mm,\n"
                 f"  current_length={self.current_length:.3f} mm,\n"
-                f"  initial_length={self.initial_length:.3f} mm,\n"
+                f"  free_length={self.length:.3f} mm,\n"
                 f"  length_change={self.length_change:.3f} mm,\n"
                 f"  spring_rate={self.spring_rate:.3f} kg/mm,\n"
                 f"  preload_force={self.preload_force:.3f} N,\n"
@@ -498,11 +474,16 @@ if __name__ == "__main__":
     print(f"\n{spring}")
 
     print("\n--- Initial state ---")
+    print(f"Free length (self.length): {spring.get_length()} mm")
     print(f"Initial length: {spring.get_initial_length()} mm")
     print(f"Current length: {spring.get_current_length()} mm")
     print(f"Length change: {spring.get_length_change()} mm")
     print(f"Reaction force: {spring.get_reaction_force_magnitude()} N")
     print(f"Center of mass: {spring.get_center_of_mass()} mm")
+
+    # Test inheritance
+    print("\n--- Testing inheritance ---")
+    print(f"isinstance(spring, SuspensionLink): {isinstance(spring, SuspensionLink)}")
 
     # Test compression
     print("\n--- Testing compression (move endpoint2 down 50mm) ---")
@@ -527,7 +508,7 @@ if __name__ == "__main__":
 
     print(f"Current length: {spring.get_current_length()} mm")
     print(f"Length change: {spring.get_length_change()} mm (positive = extension)")
-    print(f"Reaction force: {spring.get_reaction_force_magnitude()} N (negative = tension)")
+    print(f"Reaction force: {spring.get_reaction_force_magnitude()} N")
     print(f"Reaction force change: {spring.get_reaction_force_magnitude() - 500.0:.3f} N")
 
     # Test unit conversions
@@ -557,7 +538,7 @@ if __name__ == "__main__":
     print(f"After reset - length: {spring.get_current_length()} mm")
     print(f"After reset - reaction force: {spring.get_reaction_force_magnitude()} N")
 
-    # Test tension behavior (compression-only vs. tension-allowed)
+    # Test tension behavior
     print("\n--- Testing tension behavior (allow_tension=False, default) ---")
     spring_compression_only = CoilSpring(
         endpoint1=[0, 0, 0],
