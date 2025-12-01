@@ -2,6 +2,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Union, Tuple, List, Optional, TYPE_CHECKING
 from .units import to_mm, from_mm
+from .joint_types import JointType
 
 if TYPE_CHECKING:
     from typing import Set
@@ -19,12 +20,14 @@ class AttachmentPoint:
         position: 3D position vector [x, y, z]
         is_relative: True if relative to parent component, False if absolute
         unit: Unit of input position
+        joint_type: Type of joint at this attachment point (default: JointType.BALL_JOINT)
         parent_component: Optional reference to the component this attachment point belongs to
     """
     name: str
     position: Union[np.ndarray, Tuple[float, float, float]]  # 3D position vector [x, y, z]
     is_relative: bool = True  # True if relative to parent component, False if absolute
     unit: str = 'mm'  # Unit of input position
+    joint_type: JointType = JointType.BALL_JOINT  # Type of joint at this attachment point
     parent_component: Optional[object] = None  # Reference to the owning component
     _position_mm: np.ndarray = field(init=False, repr=False)
     _connected_points: List['AttachmentPoint'] = field(init=False, repr=False, default_factory=list)
@@ -141,6 +144,7 @@ class AttachmentPoint:
             position=self._position_mm.copy(),
             is_relative=self.is_relative,
             unit='mm',
+            joint_type=self.joint_type,
             parent_component=self.parent_component
         )
 
@@ -158,7 +162,8 @@ class AttachmentPoint:
             'name': self.name,
             'position': self._position_mm.tolist(),  # Convert numpy array to list
             'is_relative': self.is_relative,
-            'unit': 'mm'  # Always serialize in mm for consistency
+            'unit': 'mm',  # Always serialize in mm for consistency
+            'joint_type': self.joint_type.value  # Serialize enum as string value
         }
 
     @classmethod
@@ -177,11 +182,17 @@ class AttachmentPoint:
             KeyError: If required fields are missing
             ValueError: If data is invalid
         """
+        # Deserialize joint_type from string value
+        joint_type = JointType.BALL_JOINT  # Default
+        if 'joint_type' in data:
+            joint_type = JointType(data['joint_type'])
+
         return cls(
             name=data['name'],
             position=data['position'],
             is_relative=data.get('is_relative', True),
             unit=data.get('unit', 'mm'),
+            joint_type=joint_type,
             parent_component=parent_component
         )
 
