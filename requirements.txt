@@ -1,0 +1,7 @@
+# pysuspension - Core dependencies
+
+# Numerical computing library for array operations and linear algebra
+numpy>=1.20.0
+
+# Scientific computing library for optimization (required for solvers)
+scipy>=1.7.0
