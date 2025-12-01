@@ -1,15 +1,17 @@
 import numpy as np
 from typing import List, Tuple, Union, Optional
+from .rigid_body import RigidBody
 from .suspension_link import SuspensionLink
 from .attachment_point import AttachmentPoint
-from .units import to_mm, from_mm, to_kg
+from .units import to_mm, from_mm
 
 
-class ControlArm:
+class ControlArm(RigidBody):
     """
     Represents a control arm consisting of multiple suspension links and attachment points
     that move together as a rigid body.
 
+    Extends RigidBody to provide rigid body transformation behavior.
     All positions are stored internally in millimeters (mm).
     """
 
@@ -22,28 +24,13 @@ class ControlArm:
             mass: Mass of the control arm (default: 0.0)
             mass_unit: Unit of input mass (default: 'kg')
         """
-        self.name = name
-        self.mass = to_kg(mass, mass_unit)
+        super().__init__(name=name, mass=mass, mass_unit=mass_unit)
+
         self.links: List[SuspensionLink] = []
-        self.attachment_points: List[AttachmentPoint] = []  # All attachment points (not from links)
 
-        # Rigid body transformation (identity initially)
-        self.centroid = None
-        self.center_of_mass = None
-        self.rotation_matrix = np.eye(3)
+        # Store original link endpoints for reset
+        self._original_link_endpoints = []
 
-        # Store original state for reset (updated when links/attachments are added)
-        self._original_state = {
-            'link_endpoints': [],  # List of (endpoint1, endpoint2) tuples
-            'attachment_points': [],  # List of AttachmentPoint copies
-            'centroid': None,
-            'center_of_mass': None,
-            'rotation_matrix': self.rotation_matrix.copy(),
-        }
-
-        # Flag to freeze original state after first transformation
-        self._original_state_frozen = False
-        
     def add_link(self, link: SuspensionLink) -> None:
         """
         Add a suspension link to the control arm.
@@ -52,39 +39,22 @@ class ControlArm:
             link: SuspensionLink to add
         """
         self.links.append(link)
+
         # Store original endpoint positions
-        self._original_state['link_endpoints'].append((link.endpoint1.position.copy(), link.endpoint2.position.copy()))
-        self._update_centroid()
-    
-    def add_attachment_point(self, name: str, position: Union[np.ndarray, Tuple[float, float, float]],
-                            unit: str = 'mm') -> AttachmentPoint:
-        """
-        Add an attachment point to the control arm.
+        if not self._original_state_frozen:
+            self._original_link_endpoints.append((
+                link.endpoint1.position.copy(),
+                link.endpoint2.position.copy()
+            ))
 
-        Args:
-            name: Identifier for the attachment point
-            position: 3D position [x, y, z]
-            unit: Unit of input position (default: 'mm')
-
-        Returns:
-            The created AttachmentPoint object
-        """
-        attachment = AttachmentPoint(
-            name=name,
-            position=position,
-            is_relative=False,  # Control arm attachment points are in absolute coordinates
-            unit=unit,
-            parent_component=self
-        )
-        self.attachment_points.append(attachment)
-        # Store original attachment point (copy without connections)
-        self._original_state['attachment_points'].append(attachment.copy())
         self._update_centroid()
-        return attachment
-    
+
     def _update_centroid(self) -> None:
-        """Update the centroid and center of mass of all attachment points.
-        The center of mass is located at the geometric center of all attachment points."""
+        """
+        Update the centroid and center of mass from all attachment points and link endpoints.
+
+        Overrides parent to gather points from both links and additional attachments.
+        """
         all_points = []
 
         # Collect all link endpoints
@@ -92,7 +62,7 @@ class ControlArm:
             all_points.append(link.endpoint1.position)
             all_points.append(link.endpoint2.position)
 
-        # Collect attachment point positions
+        # Collect additional attachment point positions
         for attachment in self.attachment_points:
             all_points.append(attachment.position)
 
@@ -103,15 +73,15 @@ class ControlArm:
             self.centroid = np.zeros(3)
             self.center_of_mass = np.zeros(3)
 
-        # Update original state only if not frozen (i.e., during setup, before transformations)
-        # This ensures original state reflects all attachments added during setup
+        # Update original state only if not frozen
         if not self._original_state_frozen:
             self._original_state['centroid'] = self.centroid.copy() if self.centroid is not None else None
             self._original_state['center_of_mass'] = self.center_of_mass.copy() if self.center_of_mass is not None else None
-    
+
     def get_all_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
         """
         Get all unique attachment point positions.
+
         Link endpoints and additional attachments are included, with duplicates removed.
 
         Args:
@@ -129,7 +99,7 @@ class ControlArm:
                 # Check if this position is already in the list (within tolerance)
                 is_duplicate = False
                 for existing_pos in position_set:
-                    if np.linalg.norm(endpoint - existing_pos) < 1e-6:  # Adjusted tolerance for mm
+                    if np.linalg.norm(endpoint - existing_pos) < 1e-6:
                         is_duplicate = True
                         break
 
@@ -143,7 +113,7 @@ class ControlArm:
             # Check for duplicates
             is_duplicate = False
             for existing_pos in position_set:
-                if np.linalg.norm(pos - existing_pos) < 1e-6:  # Adjusted tolerance for mm
+                if np.linalg.norm(pos - existing_pos) < 1e-6:
                     is_duplicate = True
                     break
 
@@ -154,83 +124,16 @@ class ControlArm:
         # Convert all positions to requested unit
         return [from_mm(pos, unit) for pos in positions]
 
-    def get_center_of_mass(self, unit: str = 'mm') -> np.ndarray:
+    def _apply_transformation(self, R: np.ndarray, t: np.ndarray) -> None:
         """
-        Get the center of mass position.
+        Apply rigid body transformation to links and attachments.
+
+        Overrides parent to also transform link endpoints.
 
         Args:
-            unit: Unit for output (default: 'mm')
-
-        Returns:
-            3D position vector in specified unit
+            R: 3x3 rotation matrix
+            t: 3D translation vector (in mm)
         """
-        if self.center_of_mass is None:
-            return from_mm(np.zeros(3), unit)
-        return from_mm(self.center_of_mass.copy(), unit)
-
-    def set_center_of_mass(self, position: Union[np.ndarray, Tuple[float, float, float]], unit: str = 'mm') -> None:
-        """
-        Set the center of mass position.
-
-        Args:
-            position: New center of mass position [x, y, z]
-            unit: Unit of input position (default: 'mm')
-        """
-        self.center_of_mass = to_mm(np.array(position, dtype=float), unit)
-
-    def fit_to_attachment_targets(self, target_positions: List[np.ndarray], unit: str = 'mm') -> float:
-        """
-        Fit the control arm to target attachment positions using rigid body transformation.
-        Updates all link positions and center of mass based on the optimal rigid body fit.
-        The center of mass moves as a rigid body with the control arm.
-
-        Args:
-            target_positions: List of target positions in same order as get_all_attachment_positions()
-            unit: Unit of input target positions (default: 'mm')
-
-        Returns:
-            RMS error of the fit (in mm)
-        """
-        # Freeze original state on first transformation
-        self._original_state_frozen = True
-
-        current_positions = self.get_all_attachment_positions(unit='mm')
-
-        if len(target_positions) != len(current_positions):
-            raise ValueError(f"Expected {len(current_positions)} target positions, got {len(target_positions)}")
-
-        if len(current_positions) < 3:
-            raise ValueError("Need at least 3 attachment points for rigid body fit")
-
-        # Convert to numpy arrays and to mm
-        current_points = np.array(current_positions)
-        target_points = np.array([to_mm(np.array(p, dtype=float), unit) for p in target_positions])
-
-        # Compute centroids
-        centroid_current = np.mean(current_points, axis=0)
-        centroid_target = np.mean(target_points, axis=0)
-
-        # Center the point sets
-        current_centered = current_points - centroid_current
-        target_centered = target_points - centroid_target
-
-        # Compute the cross-covariance matrix H
-        H = current_centered.T @ target_centered
-
-        # Singular Value Decomposition
-        U, S, Vt = np.linalg.svd(H)
-
-        # Compute rotation matrix
-        R = Vt.T @ U.T
-
-        # Ensure proper rotation (det(R) = 1)
-        if np.linalg.det(R) < 0:
-            Vt[-1, :] *= -1
-            R = Vt.T @ U.T
-
-        # Compute translation
-        t = centroid_target - R @ centroid_current
-
         # Transform center of mass (if it exists)
         if self.center_of_mass is not None:
             self.center_of_mass = R @ self.center_of_mass + t
@@ -252,13 +155,6 @@ class ControlArm:
         self.rotation_matrix = R
         self._update_centroid()
 
-        # Calculate RMS error
-        transformed_points = (R @ current_points.T).T + t
-        errors = target_points - transformed_points
-        rms_error = np.sqrt(np.mean(np.sum(errors**2, axis=1)))
-
-        return rms_error
-
     def reset_to_origin(self) -> None:
         """
         Reset the control arm to its originally defined position.
@@ -271,8 +167,8 @@ class ControlArm:
         """
         # Restore link endpoints
         for i, link in enumerate(self.links):
-            if i < len(self._original_state['link_endpoints']):
-                endpoint1, endpoint2 = self._original_state['link_endpoints'][i]
+            if i < len(self._original_link_endpoints):
+                endpoint1, endpoint2 = self._original_link_endpoints[i]
                 link.endpoint1.set_position(endpoint1.copy(), unit='mm')
                 link.endpoint2.set_position(endpoint2.copy(), unit='mm')
                 link._update_local_frame()
@@ -286,38 +182,11 @@ class ControlArm:
         # Restore transformation
         self.rotation_matrix = self._original_state['rotation_matrix'].copy()
 
-        # Restore centroid and center of mass
-        if self._original_state['centroid'] is not None:
-            self.centroid = self._original_state['centroid'].copy()
-        if self._original_state['center_of_mass'] is not None:
-            self.center_of_mass = self._original_state['center_of_mass'].copy()
-
         # Unfreeze original state to allow subsequent transformations
         self._original_state_frozen = False
 
-    def get_attachment_point(self, name: str) -> Optional[AttachmentPoint]:
-        """
-        Get an attachment point by name.
-
-        Args:
-            name: Name of the attachment point
-
-        Returns:
-            AttachmentPoint object if found, None otherwise
-        """
-        for attachment in self.attachment_points:
-            if attachment.name == name:
-                return attachment
-        return None
-
-    def get_all_attachment_points(self) -> List[AttachmentPoint]:
-        """
-        Get all attachment point objects.
-
-        Returns:
-            List of all AttachmentPoint objects
-        """
-        return self.attachment_points.copy()
+        # Recalculate centroid and center of mass
+        self._update_centroid()
 
     def to_dict(self) -> dict:
         """
@@ -451,5 +320,9 @@ if __name__ == "__main__":
     for link in control_arm.links:
         print(f"  {link.name} (mm): {link.get_length():.3f}")
         print(f"  {link.name} (m): {link.get_length('m'):.6f}")
+
+    # Test inheritance
+    print("\n--- Testing inheritance ---")
+    print(f"isinstance(control_arm, RigidBody): {isinstance(control_arm, RigidBody)}")
 
     print("\n✓ All tests completed successfully!")
