@@ -17,9 +17,9 @@ from .constraints import (
     DistanceConstraint,
     FixedPointConstraint,
     CoincidentPointConstraint,
-    PartialPositionConstraint,
-    JointType
+    PartialPositionConstraint
 )
+from .joint_types import JointType
 from .attachment_point import AttachmentPoint
 from .control_arm import ControlArm
 from .suspension_link import SuspensionLink
