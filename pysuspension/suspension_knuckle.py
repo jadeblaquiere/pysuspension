@@ -68,9 +68,6 @@ class SuspensionKnuckle(RigidBody):
         # Wheel mounting plane offset (in mm)
         self.wheel_offset = wheel_offset_mm
 
-        # Steering attachment designation (None if not set)
-        self.steering_attachment_name: Optional[str] = None
-
         # Compute rotation matrix and tire axis
         self._update_geometry()
 
@@ -243,171 +240,6 @@ class SuspensionKnuckle(RigidBody):
 
         return rms_error
 
-    def set_steering_attachment(self, attachment_name: str) -> None:
-        """
-        Designate which attachment point is the steering input.
-
-        Args:
-            attachment_name: Name of the attachment point to use as steering input
-
-        Raises:
-            ValueError: If attachment point doesn't exist
-        """
-        # Verify the attachment exists
-        found = False
-        for ap in self.attachment_points:
-            if ap.name == attachment_name:
-                found = True
-                break
-
-        if not found:
-            raise ValueError(f"Attachment point '{attachment_name}' not found")
-
-        self.steering_attachment_name = attachment_name
-
-    def get_steering_attachment_position(self, unit: str = 'mm') -> np.ndarray:
-        """
-        Get the position of the designated steering attachment point.
-
-        Args:
-            unit: Unit for output (default: 'mm')
-
-        Returns:
-            Position of steering attachment in specified unit
-
-        Raises:
-            ValueError: If no steering attachment has been designated
-        """
-        if self.steering_attachment_name is None:
-            raise ValueError("No steering attachment has been designated. Use set_steering_attachment() first.")
-
-        return self.get_attachment_position(self.steering_attachment_name, unit=unit)
-
-    def fit_to_steering_attachment_target(self, target_position: Union[np.ndarray, Tuple[float, float, float]],
-                                          unit: str = 'mm') -> float:
-        """
-        Fit the knuckle so the steering attachment exactly matches the target position.
-        The knuckle rotates and translates to place the steering attachment at the target
-        while minimizing RMS error for the remaining attachment points relative to their
-        previous positions.
-
-        This is useful for steering input where the tie rod end must be at a specific
-        position dictated by the steering rack, and the knuckle rotates accordingly.
-
-        Args:
-            target_position: Target position for the steering attachment
-            unit: Unit of input target position (default: 'mm')
-
-        Returns:
-            RMS error for non-steering attachments (in mm)
-
-        Raises:
-            ValueError: If no steering attachment has been designated
-        """
-        if self.steering_attachment_name is None:
-            raise ValueError("No steering attachment has been designated. Use set_steering_attachment() first.")
-
-        # Convert target to mm
-        target = to_mm(np.array(target_position, dtype=float), unit)
-
-        # Find the steering attachment and separate from others
-        steering_attachment = None
-        other_attachments = []
-        current_positions = {}
-
-        for ap in self.attachment_points:
-            abs_pos = ap.get_position(unit='mm')
-            current_positions[ap.name] = abs_pos
-
-            if ap.name == self.steering_attachment_name:
-                steering_attachment = ap
-            else:
-                other_attachments.append(ap)
-
-        if len(other_attachments) == 0:
-            # Only steering attachment exists - just move it to target
-            # Calculate the translation needed
-            current_steering_pos = steering_attachment.get_position(unit='mm')
-            translation = target - current_steering_pos
-
-            # Apply translation to the knuckle
-            self.tire_center = self.tire_center + translation
-            for ap in self.attachment_points:
-                ap.set_position(ap.position + translation, unit='mm')
-            self.center_of_mass = self.center_of_mass + translation
-            return 0.0
-
-        # Calculate "local" positions relative to tire center
-        # (this simulates the old relative positioning)
-        steering_rel = current_positions[steering_attachment.name] - self.tire_center
-
-        # For other attachments, get their "relative" positions and absolute positions
-        other_rel = np.array([current_positions[ap.name] - self.tire_center for ap in other_attachments])
-        other_curr = np.array([current_positions[ap.name] for ap in other_attachments])
-
-        # We need to find R and t such that:
-        # 1. R @ steering_rel + t = target (exact constraint)
-        # 2. Minimize sum ||R @ other_rel[i] + t - other_curr[i]||^2
-
-        # From constraint 1: t = target - R @ steering_rel
-        # Substituting into 2:
-        # Minimize sum ||R @ other_rel[i] + target - R @ steering_rel - other_curr[i]||^2
-        # = Minimize sum ||R @ (other_rel[i] - steering_rel) - (other_curr[i] - target)||^2
-
-        # This is a Procrustes problem: find R to minimize ||R @ A - B||^2 where:
-        # A = positions relative to steering attachment in "local" frame
-        # B = positions relative to target in global frame
-
-        A = other_rel - steering_rel  # Relative to steering attachment
-        B = other_curr - target  # Relative to target in global frame
-
-        # SVD solution for optimal rotation
-        H = A.T @ B
-        U, S, Vt = np.linalg.svd(H)
-        R = Vt.T @ U.T
-
-        # Ensure proper rotation (det(R) = 1)
-        if np.linalg.det(R) < 0:
-            Vt[-1, :] *= -1
-            R = Vt.T @ U.T
-
-        # Calculate translation from constraint
-        t = target - R @ steering_rel
-
-        # The transformation is: new_pos = R @ (old_pos - tire_center) + t
-        # Which is equivalent to: new_pos = R @ old_pos + (t - R @ tire_center)
-        # So the translation for absolute positions is: t_abs = t - R @ tire_center
-        old_tire_center = self.tire_center.copy()
-        t_abs = t - R @ old_tire_center
-
-        # Update all attachment points
-        for ap in self.attachment_points:
-            new_pos = R @ (ap.position - old_tire_center) + t
-            ap.set_position(new_pos, unit='mm')
-
-        # Update tire center
-        self.tire_center = R @ (old_tire_center - old_tire_center) + t  # = t
-        self.tire_center = t
-
-        # Update center of mass
-        self.center_of_mass = R @ (self.center_of_mass - old_tire_center) + t
-
-        # Update rotation matrix
-        old_rotation = self.rotation_matrix.copy()
-        self.rotation_matrix = R @ old_rotation
-
-        # Extract toe and camber angles from new rotation matrix
-        self.camber_angle = np.arcsin(np.clip(self.rotation_matrix[1, 2], -1, 1))
-        self.toe_angle = np.arctan2(self.rotation_matrix[1, 0],
-                                     np.sqrt(self.rotation_matrix[1, 1]**2 + self.rotation_matrix[1, 2]**2))
-
-        # Calculate RMS error for non-steering attachments
-        transformed = (R @ other_rel.T).T + t
-        errors = other_curr - transformed
-        rms_error = np.sqrt(np.mean(np.sum(errors**2, axis=1)))
-
-        return rms_error
-
     def reset_to_origin(self) -> None:
         """
         Reset the knuckle to its originally defined position and orientation.
@@ -446,8 +278,7 @@ class SuspensionKnuckle(RigidBody):
             'mass': float(self.mass),  # Store in kg
             'mass_unit': 'kg',
             'unit': 'mm',
-            'attachment_points': [ap.to_dict() for ap in self.attachment_points],
-            'steering_attachment_name': self.steering_attachment_name
+            'attachment_points': [ap.to_dict() for ap in self.attachment_points]
         }
 
     @classmethod
@@ -489,10 +320,6 @@ class SuspensionKnuckle(RigidBody):
             # Note: Old data may have 'is_relative' flag, but we ignore it now
             # All attachments are absolute in the refactored version
             knuckle.add_attachment_point(name, position, unit=unit)
-
-        # Set steering attachment if specified
-        if 'steering_attachment_name' in data and data['steering_attachment_name'] is not None:
-            knuckle.steering_attachment_name = data['steering_attachment_name']
 
         return knuckle
 
@@ -568,49 +395,6 @@ if __name__ == "__main__":
     print(f"New tire center (mm): {knuckle.tire_center}")
     print(f"New tire center (m): {from_mm(knuckle.tire_center, 'm')}")
     print(f"New toe: {np.degrees(knuckle.toe_angle):.3f}°, camber: {np.degrees(knuckle.camber_angle):.3f}°")
-
-    # Test steering attachment functionality
-    print("\n--- Testing steering attachment functionality ---")
-
-    # Designate the tie_rod attachment as the steering input
-    knuckle.set_steering_attachment("tie_rod")
-    print(f"\nDesignated 'tie_rod' as steering attachment")
-
-    # Get current steering attachment position
-    steering_pos_initial = knuckle.get_steering_attachment_position(unit='m')
-    print(f"Initial steering attachment position (m): {steering_pos_initial}")
-
-    # Get positions of other attachments before steering input
-    upper_ball_joint_before = knuckle.get_attachment_position("upper_ball_joint", unit='m')
-    lower_ball_joint_before = knuckle.get_attachment_position("lower_ball_joint", unit='m')
-
-    print(f"Upper ball joint before (m): {upper_ball_joint_before}")
-    print(f"Lower ball joint before (m): {lower_ball_joint_before}")
-    print(f"Toe before: {np.degrees(knuckle.toe_angle):.3f}°")
-
-    # Simulate steering input - move tie rod inboard by 20mm (turning left)
-    steering_target = steering_pos_initial + np.array([0.0, 0.02, 0.0])  # 20mm inboard
-    print(f"\nApplying steering input - moving tie rod 20mm inboard")
-    print(f"Target steering position (m): {steering_target}")
-
-    # Fit knuckle to steering target
-    rms_error_steering = knuckle.fit_to_steering_attachment_target(steering_target, unit='m')
-
-    # Check results
-    steering_pos_final = knuckle.get_steering_attachment_position(unit='m')
-    upper_ball_joint_after = knuckle.get_attachment_position("upper_ball_joint", unit='m')
-    lower_ball_joint_after = knuckle.get_attachment_position("lower_ball_joint", unit='m')
-
-    print(f"\nAfter steering input:")
-    print(f"Final steering attachment position (m): {steering_pos_final}")
-    print(f"Steering position error: {np.linalg.norm(steering_pos_final - steering_target):.9f} m (should be ~0)")
-    print(f"Upper ball joint after (m): {upper_ball_joint_after}")
-    print(f"Lower ball joint after (m): {lower_ball_joint_after}")
-    print(f"Upper ball joint movement (mm): {from_mm(np.linalg.norm(to_mm(upper_ball_joint_after, 'm') - to_mm(upper_ball_joint_before, 'm')), 'mm'):.3f}")
-    print(f"Lower ball joint movement (mm): {from_mm(np.linalg.norm(to_mm(lower_ball_joint_after, 'm') - to_mm(lower_ball_joint_before, 'm')), 'mm'):.3f}")
-    print(f"Toe after: {np.degrees(knuckle.toe_angle):.3f}°")
-    print(f"Toe change: {np.degrees(knuckle.toe_angle - np.radians(0.5)):.3f}° (from initial 0.5°)")
-    print(f"RMS error for other attachments (mm): {rms_error_steering:.3f}")
 
     # Test inheritance
     print("\n--- Testing inheritance ---")

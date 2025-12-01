@@ -2,6 +2,7 @@ import numpy as np
 from typing import List, Tuple, Union
 from .attachment_point import AttachmentPoint
 from .units import to_mm, from_mm
+from .joint_types import JointType, JOINT_STIFFNESS
 
 
 class SuspensionLink:
@@ -284,19 +285,23 @@ class SuspensionLink:
                                  unit: str = 'mm') -> float:
         """
         Fit the link to target endpoint positions while maintaining constant length.
-        Updates the link position to minimize RMS error from targets.
+        Updates the link position to minimize weighted RMS error from targets.
+
+        Uses joint stiffness weighting so that stiffer joints (like ball joints) have
+        less error tolerance, while compliant joints (like soft bushings) can absorb
+        more geometric mismatch.
 
         The algorithm finds the best position by:
-        1. Computing the center of the target endpoints
+        1. Computing the weighted center of the target endpoints
         2. Computing the direction from target1 to target2
-        3. Placing the link at the target center with the link length maintained
+        3. Placing the link at the weighted target center with the link length maintained
 
         Args:
             target_endpoints: List of two target positions [target_endpoint1, target_endpoint2]
             unit: Unit of input target positions (default: 'mm')
 
         Returns:
-            RMS error between actual endpoints and targets after fitting (in mm)
+            Weighted RMS error between actual endpoints and targets after fitting (in mm)
         """
         if len(target_endpoints) != 2:
             raise ValueError("Expected list of 2 target endpoints")
@@ -304,8 +309,21 @@ class SuspensionLink:
         target1 = to_mm(np.array(target_endpoints[0], dtype=float), unit)
         target2 = to_mm(np.array(target_endpoints[1], dtype=float), unit)
 
-        # Compute target center
-        target_center = (target1 + target2) / 2.0
+        # Get joint stiffness for each endpoint
+        if self.endpoint1.joint is not None:
+            stiffness1 = JOINT_STIFFNESS[self.endpoint1.joint.joint_type]
+        else:
+            stiffness1 = JOINT_STIFFNESS[JointType.RIGID]
+
+        if self.endpoint2.joint is not None:
+            stiffness2 = JOINT_STIFFNESS[self.endpoint2.joint.joint_type]
+        else:
+            stiffness2 = JOINT_STIFFNESS[JointType.RIGID]
+
+        total_weight = stiffness1 + stiffness2
+
+        # Compute weighted target center
+        target_center = (stiffness1 * target1 + stiffness2 * target2) / total_weight
 
         # Compute target direction and distance
         target_vector = target2 - target1
@@ -317,7 +335,7 @@ class SuspensionLink:
         # Compute target axis (unit vector)
         target_axis = target_vector / target_distance
 
-        # Position the link at the target center with correct orientation
+        # Position the link at the weighted target center with correct orientation
         # maintaining the fixed link length
         self.center = target_center.copy()
         self.axis = target_axis.copy()
@@ -326,12 +344,14 @@ class SuspensionLink:
         self.endpoint1.set_position(new_endpoint1, unit='mm')
         self.endpoint2.set_position(new_endpoint2, unit='mm')
 
-        # Calculate RMS error (in mm)
+        # Calculate weighted RMS error (in mm)
         error1 = target1 - self.endpoint1.position
         error2 = target2 - self.endpoint2.position
-        rms_error = np.sqrt((np.sum(error1**2) + np.sum(error2**2)) / 2.0)
+        squared_error1 = np.sum(error1**2)
+        squared_error2 = np.sum(error2**2)
+        weighted_rms_error = np.sqrt((stiffness1 * squared_error1 + stiffness2 * squared_error2) / total_weight)
 
-        return rms_error
+        return weighted_rms_error
 
     def to_dict(self) -> dict:
         """
