@@ -3,18 +3,17 @@ import os
 import json
 import numpy as np
 
-# Add pysuspension directory to path
-pysuspension_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'pysuspension'))
-sys.path.insert(0, pysuspension_dir)
+# Add parent directory to path for pysuspension imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from attachment_point import AttachmentPoint
-from suspension_link import SuspensionLink
-from control_arm import ControlArm
-from suspension_knuckle import SuspensionKnuckle
-from steering_rack import SteeringRack
-from chassis_corner import ChassisCorner
-from chassis_axle import ChassisAxle
-from chassis import Chassis
+from pysuspension.attachment_point import AttachmentPoint
+from pysuspension.suspension_link import SuspensionLink
+from pysuspension.control_arm import ControlArm
+from pysuspension.suspension_knuckle import SuspensionKnuckle
+from pysuspension.steering_rack import SteeringRack
+from pysuspension.chassis_corner import ChassisCorner
+from pysuspension.chassis_axle import ChassisAxle
+from pysuspension.chassis import Chassis
 
 
 def test_attachment_point_serialization():
@@ -133,9 +132,12 @@ def test_suspension_knuckle_serialization():
         mass_unit='kg'
     )
 
-    knuckle.add_attachment_point("upper_ball_joint", [0, 50, 100], relative=True, unit='mm')
-    knuckle.add_attachment_point("lower_ball_joint", [0, 50, -100], relative=True, unit='mm')
-    knuckle.add_attachment_point("tie_rod", [100, 0, 50], relative=True, unit='mm')
+    # Use absolute positioning (tire_center + offset)
+    # Note: Refactored API now uses absolute positioning only
+    tire_center = np.array([1500, 800, 350])
+    knuckle.add_attachment_point("upper_ball_joint", tire_center + np.array([0, 50, 100]), unit='mm')
+    knuckle.add_attachment_point("lower_ball_joint", tire_center + np.array([0, 50, -100]), unit='mm')
+    knuckle.add_attachment_point("tie_rod", tire_center + np.array([100, 0, 50]), unit='mm')
     knuckle.steering_attachment_name = "tie_rod"
 
     # Serialize
@@ -187,7 +189,9 @@ def test_steering_rack_serialization():
 
     # Serialize
     data = rack.to_dict()
-    print(f"Serialized rack: {len(data['housing_attachment_points'])} housing points, angle={data['current_angle']}°")
+    # Note: Refactored API now stores housing as RigidBody
+    housing_points = len(data['housing']['attachment_points'])
+    print(f"Serialized rack: {housing_points} housing points, angle={data['current_angle']}°")
 
     # Check JSON serializability
     json_str = json.dumps(data)
@@ -197,7 +201,7 @@ def test_steering_rack_serialization():
 
     # Verify
     assert rack_restored.name == rack.name
-    assert len(rack_restored.housing_attachment_points) == len(rack.housing_attachment_points)
+    assert len(rack_restored.housing.attachment_points) == len(rack.housing.attachment_points)
     assert abs(rack_restored.travel_per_rotation - rack.travel_per_rotation) < 1e-3
     assert abs(rack_restored.max_displacement - rack.max_displacement) < 1e-3
     assert abs(rack_restored.current_angle - rack.current_angle) < 1e-6
