@@ -1,5 +1,6 @@
 import numpy as np
 from typing import List, Tuple, Union
+from .rigid_body import RigidBody
 from .suspension_link import SuspensionLink
 from .attachment_point import AttachmentPoint
 from .units import to_mm, from_mm
@@ -12,12 +13,15 @@ class SteeringRack:
     All positions are stored internally in millimeters (mm).
 
     The steering rack unit consists of:
-    - Housing with attachment points that connect to the chassis (≥3 points, rigid body)
+    - Housing with attachment points that connect to the chassis (≥3 points, RigidBody)
     - A steering rack that moves linearly within the housing
     - Two inner tie rod pivots (on the rack)
     - Two outer tie rod attachment points (connect to knuckles)
     - Travel per rotation (determines steering ratio)
     - Maximum displacement from center
+
+    The housing is implemented as a RigidBody member, providing rigid body
+    transformation behavior for chassis mounting.
 
     A positive travel_per_rotation indicates front-steer (rack forward of axle).
     """
@@ -54,21 +58,10 @@ class SteeringRack:
 
         self.name = name
 
-        # Create housing attachment points (rigid body connected to chassis)
-        self.housing_attachment_points: List[AttachmentPoint] = []
+        # Create housing as a RigidBody (rigid body connected to chassis)
+        self.housing = RigidBody(name=f"{name}_housing", mass=0.0, mass_unit='kg')
         for i, pos in enumerate(housing_attachments):
-            attachment = AttachmentPoint(
-                name=f"{name}_housing_{i}",
-                position=pos,
-                is_relative=False,
-                unit=unit,
-                parent_component=self
-            )
-            self.housing_attachment_points.append(attachment)
-
-        # Calculate housing center (centroid of attachment points)
-        housing_positions = np.array([ap.position for ap in self.housing_attachment_points])
-        self.housing_center = np.mean(housing_positions, axis=0)
+            self.housing.add_attachment_point(f"mount_{i}", pos, unit=unit)
 
         # Convert all rack/tie rod inputs to mm for internal storage
         self.left_inner_pivot = to_mm(np.array(left_inner_pivot, dtype=float), unit)
@@ -97,15 +90,13 @@ class SteeringRack:
         self.right_inner_pivot_initial = self.right_inner_pivot.copy()
         self.left_outer_attachment_initial = self.left_outer_attachment.copy()
         self.right_outer_attachment_initial = self.right_outer_attachment.copy()
-        self.housing_center_initial = self.housing_center.copy()
 
         # Store original positions for reset (never updated by transformations)
-        self._original_housing_positions = [ap.position.copy() for ap in self.housing_attachment_points]
+        # Note: Housing original positions are now managed by self.housing (RigidBody)
         self._original_left_inner_pivot = self.left_inner_pivot.copy()
         self._original_right_inner_pivot = self.right_inner_pivot.copy()
         self._original_left_outer_attachment = self.left_outer_attachment.copy()
         self._original_right_outer_attachment = self.right_outer_attachment.copy()
-        self._original_housing_center = self.housing_center.copy()
         self._original_rack_center = self.rack_center.copy()
         self._original_rack_axis = self.rack_axis.copy()
 
@@ -179,7 +170,7 @@ class SteeringRack:
         Returns:
             List of AttachmentPoint objects for the housing
         """
-        return self.housing_attachment_points.copy()
+        return self.housing.get_all_attachment_points()
 
     def get_chassis_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
         """
@@ -191,45 +182,7 @@ class SteeringRack:
         Returns:
             List of housing attachment positions in specified unit
         """
-        return [ap.get_position(unit) for ap in self.housing_attachment_points]
-
-    def _compute_rigid_transform(self, source_points: np.ndarray,
-                                 target_points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Compute optimal rigid body transformation (rotation and translation) from source to target.
-
-        Uses SVD to find the optimal rotation matrix and translation vector.
-
-        Args:
-            source_points: Nx3 array of source points
-            target_points: Nx3 array of target points
-
-        Returns:
-            Tuple of (rotation_matrix, translation_vector)
-        """
-        # Center the point clouds
-        source_centroid = np.mean(source_points, axis=0)
-        target_centroid = np.mean(target_points, axis=0)
-
-        source_centered = source_points - source_centroid
-        target_centered = target_points - target_centroid
-
-        # Compute cross-covariance matrix
-        H = source_centered.T @ target_centered
-
-        # SVD
-        U, S, Vt = np.linalg.svd(H)
-        R = Vt.T @ U.T
-
-        # Ensure proper rotation (det = 1, not -1)
-        if np.linalg.det(R) < 0:
-            Vt[-1, :] *= -1
-            R = Vt.T @ U.T
-
-        # Translation
-        t = target_centroid - R @ source_centroid
-
-        return R, t
+        return self.housing.get_all_attachment_positions(unit=unit)
 
     def fit_chassis_to_attachment_targets(self, target_positions: List[np.ndarray],
                                           unit: str = 'mm') -> float:
@@ -248,29 +201,25 @@ class SteeringRack:
         Raises:
             ValueError: If number of target positions doesn't match housing attachment count
         """
-        if len(target_positions) != len(self.housing_attachment_points):
-            raise ValueError(f"Expected {len(self.housing_attachment_points)} target positions, "
-                           f"got {len(target_positions)}")
+        # Store original housing positions to calculate transformation
+        original_housing_positions = self.housing.get_all_attachment_positions(unit='mm')
 
-        # Convert targets to mm
-        targets = np.array([to_mm(np.array(pos, dtype=float), unit) for pos in target_positions])
+        # Use housing's fit_to_attachment_targets (which applies the transformation)
+        rms_error = self.housing.fit_to_attachment_targets(target_positions, unit=unit)
 
-        # Get current housing positions
-        current_positions = np.array([ap.position for ap in self.housing_attachment_points])
+        # Calculate the transformation that was applied by comparing before/after
+        new_housing_positions = self.housing.get_all_attachment_positions(unit='mm')
 
-        # Compute optimal rigid body transformation
-        R, t = self._compute_rigid_transform(current_positions, targets)
+        # Extract rotation and translation from the housing transformation
+        # We can use the housing's rotation_matrix since it was updated by fit_to_attachment_targets
+        R = self.housing.rotation_matrix
 
-        # Apply transformation to housing attachment points
-        for i, attachment in enumerate(self.housing_attachment_points):
-            new_pos = R @ attachment.position + t
-            attachment.set_position(new_pos, unit='mm')
+        # Calculate translation from centroid movement
+        original_centroid = np.mean(original_housing_positions, axis=0)
+        new_centroid = self.housing.centroid
+        t = new_centroid - R @ original_centroid
 
-        # Apply same transformation to housing center
-        self.housing_center = R @ self.housing_center + t
-        self.housing_center_initial = self.housing_center.copy()
-
-        # Apply transformation to rack axis (rotation only, it's a direction vector)
+        # Apply the same transformation to rack axis (rotation only, it's a direction vector)
         self.rack_axis = R @ self.rack_axis
         self.rack_axis_initial = self.rack_axis.copy()
 
@@ -302,11 +251,6 @@ class SteeringRack:
         # Reset displacement and angle (transformation moves the entire unit, not steering input)
         self.current_displacement = 0.0
         self.current_angle = 0.0
-
-        # Calculate RMS error
-        transformed_positions = np.array([ap.position for ap in self.housing_attachment_points])
-        errors = targets - transformed_positions
-        rms_error = np.sqrt(np.mean(np.sum(errors**2, axis=1)))
 
         return rms_error
 
@@ -410,14 +354,8 @@ class SteeringRack:
         Resets housing, rack, inner pivots, outer attachments, and steering angle to
         the positions defined at construction.
         """
-        # Reset housing attachment points to original positions
-        for i, attachment in enumerate(self.housing_attachment_points):
-            if i < len(self._original_housing_positions):
-                attachment.set_position(self._original_housing_positions[i], unit='mm')
-
-        # Reset housing center to original
-        self.housing_center = self._original_housing_center.copy()
-        self.housing_center_initial = self._original_housing_center.copy()
+        # Reset housing to original positions (using RigidBody's reset)
+        self.housing.reset_to_origin()
 
         # Reset rack center and axis to original
         self.rack_center = self._original_rack_center.copy()
@@ -460,7 +398,7 @@ class SteeringRack:
         """
         return {
             'name': self.name,
-            'housing_attachment_points': [ap.to_dict() for ap in self.housing_attachment_points],
+            'housing': self.housing.to_dict(),
             'left_tie_rod': self.left_tie_rod.to_dict(),
             'right_tie_rod': self.right_tie_rod.to_dict(),
             'travel_per_rotation': float(self.travel_per_rotation),  # Store in mm
@@ -490,7 +428,14 @@ class SteeringRack:
         right_tie_rod = SuspensionLink.from_dict(data['right_tie_rod'])
 
         # Extract housing attachment positions
-        housing_positions = [ap_data['position'] for ap_data in data['housing_attachment_points']]
+        # Support both old format (housing_attachment_points) and new format (housing RigidBody)
+        if 'housing' in data:
+            # New format: housing is a RigidBody
+            housing = RigidBody.from_dict(data['housing'])
+            housing_positions = housing.get_all_attachment_positions(unit='mm')
+        else:
+            # Old format: housing_attachment_points list
+            housing_positions = [ap_data['position'] for ap_data in data['housing_attachment_points']]
 
         # Create the steering rack
         rack = cls(
@@ -513,9 +458,10 @@ class SteeringRack:
 
     def __repr__(self) -> str:
         left_len, right_len = self.get_tie_rod_lengths(unit='mm')
+        housing_centroid_str = f"{self.housing.centroid} mm" if self.housing.centroid is not None else "None"
         return (f"SteeringRack('{self.name}',\n"
-                f"  housing_center={self.housing_center} mm,\n"
-                f"  housing_attachments={len(self.housing_attachment_points)},\n"
+                f"  housing_centroid={housing_centroid_str},\n"
+                f"  housing_attachments={len(self.housing.attachment_points)},\n"
                 f"  rack_center={self.rack_center} mm,\n"
                 f"  rack_length={self.rack_length:.3f} mm,\n"
                 f"  current_angle={self.current_angle:.2f}°,\n"
