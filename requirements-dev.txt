@@ -1,0 +1,10 @@
+# pysuspension - Development dependencies
+
+# Include core dependencies
+-r requirements.txt
+
+# Testing framework
+pytest>=7.0.0
+
+# Code coverage
+pytest-cov>=3.0.0
