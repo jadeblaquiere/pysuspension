@@ -1,14 +1,17 @@
 import numpy as np
 from typing import List, Tuple, Optional, Union
+from .rigid_body import RigidBody
 from .attachment_point import AttachmentPoint
-from .units import to_mm, from_mm, to_kg
+from .units import to_mm, from_mm
 
 
-class SuspensionKnuckle:
+class SuspensionKnuckle(RigidBody):
     """
     Represents a suspension knuckle with geometric properties.
 
+    Extends RigidBody to provide rigid body transformation behavior.
     All positions are stored internally in millimeters (mm).
+    All attachment points use absolute positioning.
 
     Coordinate system:
     - x: longitudinal (+ front, - rear)
@@ -29,7 +32,8 @@ class SuspensionKnuckle:
                  wheel_offset: float = 0.0,
                  mass: float = 0.0,
                  unit: str = 'mm',
-                 mass_unit: str = 'kg'):
+                 mass_unit: str = 'kg',
+                 name: str = 'knuckle'):
         """
         Initialize suspension knuckle.
 
@@ -43,7 +47,11 @@ class SuspensionKnuckle:
             mass: Mass of the knuckle (default: 0.0)
             unit: Unit of input positions (default: 'mm')
             mass_unit: Unit of input mass (default: 'kg')
+            name: Identifier for the knuckle (default: 'knuckle')
         """
+        # Initialize parent RigidBody
+        super().__init__(name=name, mass=mass, mass_unit=mass_unit)
+
         # Convert inputs to mm for internal storage
         tire_center_x_mm = to_mm(tire_center_x, unit)
         tire_center_y_mm = to_mm(tire_center_y, unit)
@@ -60,28 +68,20 @@ class SuspensionKnuckle:
         # Wheel mounting plane offset (in mm)
         self.wheel_offset = wheel_offset_mm
 
-        # Mass (stored in kg)
-        self.mass = to_kg(mass, mass_unit)
-
-        # Center of mass (at tire center initially, in mm)
-        self.center_of_mass = self.tire_center.copy()
-
-        # Attachment points list
-        self.attachment_points: List[AttachmentPoint] = []
-
         # Steering attachment designation (None if not set)
         self.steering_attachment_name: Optional[str] = None
 
         # Compute rotation matrix and tire axis
         self._update_geometry()
 
-        # Store original state for reset
-        self._original_state = {
+        # Set center of mass to tire center initially
+        self.center_of_mass = self.tire_center.copy()
+
+        # Store knuckle-specific original state (parent handles attachment points)
+        self._knuckle_original_state = {
             'tire_center': self.tire_center.copy(),
             'toe_angle': self.toe_angle,
             'camber_angle': self.camber_angle,
-            'rotation_matrix': self.rotation_matrix.copy(),
-            'center_of_mass': self.center_of_mass.copy(),
         }
     
     def _update_geometry(self):
@@ -116,67 +116,36 @@ class SuspensionKnuckle:
         self.mounting_plane_center_relative = self.wheel_offset * self.tire_axis_relative
     
     def add_attachment_point(self, name: str, position: Tuple[float, float, float],
-                            relative: bool = True, unit: str = 'mm') -> AttachmentPoint:
+                            unit: str = 'mm') -> AttachmentPoint:
         """
-        Add an attachment point to the knuckle.
+        Add an attachment point to the knuckle (absolute positioning only).
 
         Args:
             name: Identifier for the attachment point
-            position: 3D position [x, y, z]
-            relative: If True, position is relative to tire center; if False, absolute
+            position: 3D position [x, y, z] in absolute coordinates
             unit: Unit of input position (default: 'mm')
 
         Returns:
             The created AttachmentPoint object
         """
-        pos_array = to_mm(np.array(position, dtype=float), unit)
-
-        # Convert to relative coordinates if given in absolute
-        if not relative:
-            pos_array = pos_array - self.tire_center
-
-        attachment = AttachmentPoint(name, pos_array, is_relative=True, unit='mm', parent_component=self)
-        self.attachment_points.append(attachment)
-        return attachment
+        # Use parent's add_attachment_point (which handles absolute positioning)
+        return super().add_attachment_point(name, position, unit=unit)
     
-    def get_attachment_position(self, name: str, absolute: bool = True, unit: str = 'mm') -> np.ndarray:
+    def get_attachment_position(self, name: str, unit: str = 'mm') -> np.ndarray:
         """
-        Get the position of an attachment point.
+        Get the position of an attachment point (always absolute).
 
         Args:
             name: Name of the attachment point
-            absolute: If True, return absolute position; if False, return relative to tire center
             unit: Unit for output (default: 'mm')
 
         Returns:
             3D position vector in specified unit
         """
-        for attachment in self.attachment_points:
-            if attachment.name == name:
-                # All attachments are stored in relative coordinates (in mm)
-                if absolute:
-                    # Transform by rotation matrix and add tire center
-                    local_pos = self.rotation_matrix @ attachment.position
-                    return from_mm(self.tire_center + local_pos, unit)
-                else:
-                    # Return relative position as-is
-                    return from_mm(attachment.position.copy(), unit)
-
-        raise ValueError(f"Attachment point '{name}' not found")
-    
-    def get_all_attachment_positions(self, absolute: bool = True, unit: str = 'mm') -> dict:
-        """
-        Get all attachment point positions.
-
-        Args:
-            absolute: If True, return absolute positions; if False, return relative to tire center
-            unit: Unit for output (default: 'mm')
-
-        Returns:
-            Dictionary mapping attachment point names to positions in specified unit
-        """
-        return {ap.name: self.get_attachment_position(ap.name, absolute, unit)
-                for ap in self.attachment_points}
+        attachment = self.get_attachment_point(name)
+        if attachment is None:
+            raise ValueError(f"Attachment point '{name}' not found")
+        return attachment.get_position(unit)
     
     def update_orientation(self, toe_angle: float, camber_angle: float) -> None:
         """
@@ -206,129 +175,37 @@ class SuspensionKnuckle:
         contact[2] = 0.0
         return from_mm(contact, unit)
     
-    def get_tire_axis(self, absolute: bool = True) -> np.ndarray:
+    def get_tire_axis(self) -> np.ndarray:
         """
-        Get the tire axis vector.
-        
-        Args:
-            absolute: If True, return in global coordinates; if False, return in local coordinates
-            
+        Get the tire axis vector (in global coordinates).
+
         Returns:
             3D tire axis vector
         """
-        if absolute:
-            return self.rotation_matrix @ self.tire_axis_relative
-        else:
-            return self.tire_axis_relative.copy()
-    
-    def get_wheel_mounting_plane_center(self, absolute: bool = True, unit: str = 'mm') -> np.ndarray:
+        return self.rotation_matrix @ self.tire_axis_relative
+
+    def get_wheel_mounting_plane_center(self, unit: str = 'mm') -> np.ndarray:
         """
-        Get the wheel mounting plane center position.
+        Get the wheel mounting plane center position (absolute).
 
         Args:
-            absolute: If True, return absolute position; if False, return relative to tire center
             unit: Unit for output (default: 'mm')
 
         Returns:
             3D position vector in specified unit
         """
-        if absolute:
-            local_pos = self.rotation_matrix @ self.mounting_plane_center_relative
-            return from_mm(self.tire_center + local_pos, unit)
-        else:
-            return from_mm(self.mounting_plane_center_relative.copy(), unit)
-    
-    def get_wheel_mounting_plane_normal(self, absolute: bool = True) -> np.ndarray:
-        """
-        Get the wheel mounting plane normal vector.
+        local_pos = self.rotation_matrix @ self.mounting_plane_center_relative
+        return from_mm(self.tire_center + local_pos, unit)
 
-        Args:
-            absolute: If True, return in global coordinates; if False, return in local coordinates
+    def get_wheel_mounting_plane_normal(self) -> np.ndarray:
+        """
+        Get the wheel mounting plane normal vector (in global coordinates).
 
         Returns:
             3D normal vector
         """
-        if absolute:
-            return self.rotation_matrix @ self.mounting_plane_normal_relative
-        else:
-            return self.mounting_plane_normal_relative.copy()
+        return self.rotation_matrix @ self.mounting_plane_normal_relative
 
-    def get_center_of_mass(self, unit: str = 'mm') -> np.ndarray:
-        """
-        Get the center of mass position.
-
-        Args:
-            unit: Unit for output (default: 'mm')
-
-        Returns:
-            3D position vector in specified unit
-        """
-        return from_mm(self.center_of_mass.copy(), unit)
-
-    def set_center_of_mass(self, position: Union[np.ndarray, Tuple[float, float, float]], unit: str = 'mm') -> None:
-        """
-        Set the center of mass position.
-
-        Args:
-            position: New center of mass position [x, y, z]
-            unit: Unit of input position (default: 'mm')
-        """
-        self.center_of_mass = to_mm(np.array(position, dtype=float), unit)
-
-    def fit_to_attachment_targets(self, target_positions: List[np.ndarray],
-                                  unit: str = 'mm') -> Tuple[float, np.ndarray, np.ndarray]:
-        """
-        Fit the knuckle position and orientation to target attachment point positions.
-        Uses SVD-based rigid body transformation to minimize RMS error.
-
-        Args:
-            target_positions: List of target positions in the same order as attachment points
-            unit: Unit of input target positions (default: 'mm')
-
-        Returns:
-            Tuple of (rms_error in mm, new_tire_center in mm, new_rotation_matrix)
-        """
-        if len(target_positions) != len(self.attachment_points):
-            raise ValueError(f"Expected {len(self.attachment_points)} target positions, got {len(target_positions)}")
-
-        # Convert to numpy array and to mm
-        target_points = np.array([to_mm(np.array(p, dtype=float), unit) for p in target_positions])
-        
-        # Get relative attachment positions (in knuckle local frame)
-        relative_points = np.array([ap.position for ap in self.attachment_points])
-        
-        # Compute centroids
-        centroid_target = np.mean(target_points, axis=0)
-        centroid_relative = np.mean(relative_points, axis=0)
-        
-        # Center the point sets
-        target_centered = target_points - centroid_target
-        relative_centered = relative_points - centroid_relative
-        
-        # Compute the cross-covariance matrix H = sum(relative_i * target_i^T)
-        H = relative_centered.T @ target_centered
-        
-        # Singular Value Decomposition
-        U, S, Vt = np.linalg.svd(H)
-        
-        # Compute rotation matrix
-        R = Vt.T @ U.T
-        
-        # Ensure proper rotation (det(R) = 1, not -1 for reflection)
-        if np.linalg.det(R) < 0:
-            Vt[-1, :] *= -1
-            R = Vt.T @ U.T
-        
-        # Compute translation
-        t = centroid_target - R @ centroid_relative
-        
-        # Calculate RMS error
-        transformed_points = (R @ relative_points.T).T + t
-        errors = target_points - transformed_points
-        rms_error = np.sqrt(np.mean(np.sum(errors**2, axis=1)))
-        
-        return rms_error, t, R
-    
     def update_from_attachment_targets(self, target_positions: List[np.ndarray], unit: str = 'mm') -> float:
         """
         Update knuckle position and orientation to best fit target attachment positions.
@@ -342,31 +219,24 @@ class SuspensionKnuckle:
         Returns:
             RMS error of the fit (in mm)
         """
-        # Store old position for transformation
+        # Store old tire center for transformation
         old_tire_center = self.tire_center.copy()
-        old_rotation = self.rotation_matrix.copy()
 
-        rms_error, new_center, new_rotation = self.fit_to_attachment_targets(target_positions, unit)
+        # Use parent's fit_to_attachment_targets (which applies the transformation)
+        # This updates all attachment points, center_of_mass, and rotation_matrix
+        rms_error = super().fit_to_attachment_targets(target_positions, unit=unit)
 
-        # Compute the transformation: new_pos = R @ old_pos + t
-        # where R = new_rotation @ old_rotation.T and t = new_center - R @ old_tire_center
-        R_transform = new_rotation @ old_rotation.T
-        t_transform = new_center - R_transform @ old_tire_center
+        # Calculate how the centroid moved (tire center needs to move similarly)
+        centroid_delta = self.centroid - old_tire_center
 
-        # Transform center of mass
-        self.center_of_mass = R_transform @ self.center_of_mass + t_transform
-
-        # Update tire center
-        self.tire_center = new_center
-
-        # Update rotation matrix
-        self.rotation_matrix = new_rotation
+        # Update tire center to maintain its relationship with the knuckle
+        self.tire_center = self.tire_center + centroid_delta
 
         # Extract toe and camber angles from rotation matrix
         # R = R_toe @ R_camber
         # For small angles, we can extract them, but for general case:
         # camber is arcsin(R[1,2])
-        # toe is arctan2(R[1,0], R[1,1])
+        # toe is arctan2(R[1,0], sqrt(R[1,1]^2 + R[1,2]^2))
         self.camber_angle = np.arcsin(np.clip(self.rotation_matrix[1, 2], -1, 1))
         self.toe_angle = np.arctan2(self.rotation_matrix[1, 0],
                                      np.sqrt(self.rotation_matrix[1, 1]**2 + self.rotation_matrix[1, 2]**2))
@@ -411,7 +281,7 @@ class SuspensionKnuckle:
         if self.steering_attachment_name is None:
             raise ValueError("No steering attachment has been designated. Use set_steering_attachment() first.")
 
-        return self.get_attachment_position(self.steering_attachment_name, absolute=True, unit=unit)
+        return self.get_attachment_position(self.steering_attachment_name, unit=unit)
 
     def fit_to_steering_attachment_target(self, target_position: Union[np.ndarray, Tuple[float, float, float]],
                                           unit: str = 'mm') -> float:
@@ -446,7 +316,7 @@ class SuspensionKnuckle:
         current_positions = {}
 
         for ap in self.attachment_points:
-            abs_pos = self.get_attachment_position(ap.name, absolute=True, unit='mm')
+            abs_pos = ap.get_position(unit='mm')
             current_positions[ap.name] = abs_pos
 
             if ap.name == self.steering_attachment_name:
@@ -455,18 +325,24 @@ class SuspensionKnuckle:
                 other_attachments.append(ap)
 
         if len(other_attachments) == 0:
-            # Only steering attachment exists - just move tire center
-            # We want: tire_center + R @ steering_attachment.position = target
-            # If we don't change R, then: tire_center = target - R @ steering_attachment.position
-            local_pos = self.rotation_matrix @ steering_attachment.position
-            self.tire_center = target - local_pos
+            # Only steering attachment exists - just move it to target
+            # Calculate the translation needed
+            current_steering_pos = steering_attachment.get_position(unit='mm')
+            translation = target - current_steering_pos
+
+            # Apply translation to the knuckle
+            self.tire_center = self.tire_center + translation
+            for ap in self.attachment_points:
+                ap.set_position(ap.position + translation, unit='mm')
+            self.center_of_mass = self.center_of_mass + translation
             return 0.0
 
-        # Get steering attachment position in knuckle local frame
-        steering_rel = steering_attachment.position
+        # Calculate "local" positions relative to tire center
+        # (this simulates the old relative positioning)
+        steering_rel = current_positions[steering_attachment.name] - self.tire_center
 
-        # For other attachments, get their positions in knuckle local frame and absolute
-        other_rel = np.array([ap.position for ap in other_attachments])
+        # For other attachments, get their "relative" positions and absolute positions
+        other_rel = np.array([current_positions[ap.name] - self.tire_center for ap in other_attachments])
         other_curr = np.array([current_positions[ap.name] for ap in other_attachments])
 
         # We need to find R and t such that:
@@ -479,10 +355,10 @@ class SuspensionKnuckle:
         # = Minimize sum ||R @ (other_rel[i] - steering_rel) - (other_curr[i] - target)||^2
 
         # This is a Procrustes problem: find R to minimize ||R @ A - B||^2 where:
-        # A = positions relative to steering attachment in local frame
+        # A = positions relative to steering attachment in "local" frame
         # B = positions relative to target in global frame
 
-        A = other_rel - steering_rel  # Relative to steering attachment in local frame
+        A = other_rel - steering_rel  # Relative to steering attachment
         B = other_curr - target  # Relative to target in global frame
 
         # SVD solution for optimal rotation
@@ -498,24 +374,32 @@ class SuspensionKnuckle:
         # Calculate translation from constraint
         t = target - R @ steering_rel
 
-        # Store old position for transformation of center of mass
+        # The transformation is: new_pos = R @ (old_pos - tire_center) + t
+        # Which is equivalent to: new_pos = R @ old_pos + (t - R @ tire_center)
+        # So the translation for absolute positions is: t_abs = t - R @ tire_center
         old_tire_center = self.tire_center.copy()
-        old_rotation = self.rotation_matrix.copy()
+        t_abs = t - R @ old_tire_center
 
-        # Compute the transformation for center of mass
-        R_transform = R @ old_rotation.T
-        t_transform = t - R_transform @ old_tire_center
+        # Update all attachment points
+        for ap in self.attachment_points:
+            new_pos = R @ (ap.position - old_tire_center) + t
+            ap.set_position(new_pos, unit='mm')
 
-        # Transform center of mass
-        self.center_of_mass = R_transform @ self.center_of_mass + t_transform
-
-        # Update knuckle transformation
+        # Update tire center
+        self.tire_center = R @ (old_tire_center - old_tire_center) + t  # = t
         self.tire_center = t
-        self.rotation_matrix = R
+
+        # Update center of mass
+        self.center_of_mass = R @ (self.center_of_mass - old_tire_center) + t
+
+        # Update rotation matrix
+        old_rotation = self.rotation_matrix.copy()
+        self.rotation_matrix = R @ old_rotation
 
         # Extract toe and camber angles from new rotation matrix
-        self.camber_angle = np.arcsin(np.clip(R[1, 2], -1, 1))
-        self.toe_angle = np.arctan2(R[1, 0], np.sqrt(R[1, 1]**2 + R[1, 2]**2))
+        self.camber_angle = np.arcsin(np.clip(self.rotation_matrix[1, 2], -1, 1))
+        self.toe_angle = np.arctan2(self.rotation_matrix[1, 0],
+                                     np.sqrt(self.rotation_matrix[1, 1]**2 + self.rotation_matrix[1, 2]**2))
 
         # Calculate RMS error for non-steering attachments
         transformed = (R @ other_rel.T).T + t
@@ -529,18 +413,23 @@ class SuspensionKnuckle:
         Reset the knuckle to its originally defined position and orientation.
 
         This restores:
+        - All attachment point positions (via parent)
         - Tire center position
         - Toe and camber angles
         - Rotation matrix
         - Center of mass position
-
-        Note: Attachment point relative positions are not changed as they define the knuckle geometry.
+        - Centroid
         """
-        self.tire_center = self._original_state['tire_center'].copy()
-        self.toe_angle = self._original_state['toe_angle']
-        self.camber_angle = self._original_state['camber_angle']
-        self.rotation_matrix = self._original_state['rotation_matrix'].copy()
-        self.center_of_mass = self._original_state['center_of_mass'].copy()
+        # Call parent's reset_to_origin to restore attachment points
+        super().reset_to_origin()
+
+        # Restore knuckle-specific state
+        self.tire_center = self._knuckle_original_state['tire_center'].copy()
+        self.toe_angle = self._knuckle_original_state['toe_angle']
+        self.camber_angle = self._knuckle_original_state['camber_angle']
+
+        # Recompute rotation matrix from toe and camber
+        self._update_geometry()
 
     def to_dict(self) -> dict:
         """
@@ -592,13 +481,14 @@ class SuspensionKnuckle:
             mass_unit=data.get('mass_unit', 'kg')
         )
 
-        # Add attachment points
+        # Add attachment points (all absolute positioning now)
         for ap_data in data.get('attachment_points', []):
             position = ap_data['position']
             name = ap_data['name']
-            is_relative = ap_data.get('is_relative', True)
             unit = ap_data.get('unit', 'mm')
-            knuckle.add_attachment_point(name, position, relative=is_relative, unit=unit)
+            # Note: Old data may have 'is_relative' flag, but we ignore it now
+            # All attachments are absolute in the refactored version
+            knuckle.add_attachment_point(name, position, unit=unit)
 
         # Set steering attachment if specified
         if 'steering_attachment_name' in data and data['steering_attachment_name'] is not None:
@@ -607,13 +497,16 @@ class SuspensionKnuckle:
         return knuckle
 
     def __repr__(self) -> str:
-        return (f"SuspensionKnuckle(\n"
+        centroid_str = f"{self.centroid} mm" if self.centroid is not None else "None"
+        com_str = f"{self.center_of_mass} mm" if self.center_of_mass is not None else "None"
+        return (f"SuspensionKnuckle('{self.name}',\n"
                 f"  tire_center={self.tire_center} mm,\n"
                 f"  toe={np.degrees(self.toe_angle):.2f}°,\n"
                 f"  camber={np.degrees(self.camber_angle):.2f}°,\n"
                 f"  wheel_offset={self.wheel_offset:.3f} mm,\n"
                 f"  mass={self.mass:.3f} kg,\n"
-                f"  center_of_mass={self.center_of_mass} mm,\n"
+                f"  centroid={centroid_str},\n"
+                f"  center_of_mass={com_str},\n"
                 f"  attachments={len(self.attachment_points)}\n"
                 f")")
 
@@ -634,34 +527,32 @@ if __name__ == "__main__":
         unit='m'  # Input in meters
     )
 
-    # Add attachment points (using meters as input)
-    knuckle.add_attachment_point("upper_ball_joint", [0, 0, 0.25], relative=True, unit='m')
-    knuckle.add_attachment_point("lower_ball_joint", [0, 0, -0.25], relative=True, unit='m')
-    knuckle.add_attachment_point("tie_rod", [0.1, -0.1, 0.0], relative=True, unit='m')
+    # Add attachment points (using absolute positioning, in meters)
+    # Calculate absolute positions by adding tire center offset
+    tire_center_m = np.array([1.5, 0.75, 0.35])
+    knuckle.add_attachment_point("upper_ball_joint", tire_center_m + np.array([0, 0, 0.25]), unit='m')
+    knuckle.add_attachment_point("lower_ball_joint", tire_center_m + np.array([0, 0, -0.25]), unit='m')
+    knuckle.add_attachment_point("tie_rod", tire_center_m + np.array([0.1, -0.1, 0.0]), unit='m')
 
     print(knuckle)
-    print("\nAttachment positions (absolute, in mm):")
-    for name, pos in knuckle.get_all_attachment_positions(absolute=True, unit='mm').items():
-        print(f"  {name}: {pos}")
+    print("\nAttachment positions (in mm):")
+    for ap in knuckle.attachment_points:
+        print(f"  {ap.name}: {ap.get_position(unit='mm')}")
 
-    print("\nAttachment positions (absolute, in m):")
-    for name, pos in knuckle.get_all_attachment_positions(absolute=True, unit='m').items():
-        print(f"  {name}: {pos}")
+    print("\nAttachment positions (in m):")
+    for ap in knuckle.attachment_points:
+        print(f"  {ap.name}: {ap.get_position(unit='m')}")
 
-    print("\nAttachment positions (relative, in mm):")
-    for name, pos in knuckle.get_all_attachment_positions(absolute=False, unit='mm').items():
-        print(f"  {name}: {pos}")
-
-    print(f"\nTire axis (absolute): {knuckle.get_tire_axis(absolute=True)}")
-    print(f"Wheel mounting plane center (absolute, mm): {knuckle.get_wheel_mounting_plane_center(absolute=True)}")
-    print(f"Wheel mounting plane center (absolute, m): {knuckle.get_wheel_mounting_plane_center(absolute=True, unit='m')}")
+    print(f"\nTire axis: {knuckle.get_tire_axis()}")
+    print(f"Wheel mounting plane center (mm): {knuckle.get_wheel_mounting_plane_center()}")
+    print(f"Wheel mounting plane center (m): {knuckle.get_wheel_mounting_plane_center(unit='m')}")
     print(f"Tire contact patch (mm): {knuckle.get_tire_contact_patch()}")
     print(f"Tire contact patch (m): {knuckle.get_tire_contact_patch('m')}")
 
     # Test fitting to new attachment positions
     print("\n--- Testing knuckle positioning from attachment targets ---")
 
-    original_positions = list(knuckle.get_all_attachment_positions(absolute=True, unit='m').values())
+    original_positions = knuckle.get_all_attachment_positions(unit='m')
     # Create target positions in meters: translate by 50mm x, 0 y, -30mm z
     target_positions = [pos + np.array([0.05, 0.0, -0.03]) for pos in original_positions]
 
@@ -690,8 +581,8 @@ if __name__ == "__main__":
     print(f"Initial steering attachment position (m): {steering_pos_initial}")
 
     # Get positions of other attachments before steering input
-    upper_ball_joint_before = knuckle.get_attachment_position("upper_ball_joint", absolute=True, unit='m')
-    lower_ball_joint_before = knuckle.get_attachment_position("lower_ball_joint", absolute=True, unit='m')
+    upper_ball_joint_before = knuckle.get_attachment_position("upper_ball_joint", unit='m')
+    lower_ball_joint_before = knuckle.get_attachment_position("lower_ball_joint", unit='m')
 
     print(f"Upper ball joint before (m): {upper_ball_joint_before}")
     print(f"Lower ball joint before (m): {lower_ball_joint_before}")
@@ -707,18 +598,22 @@ if __name__ == "__main__":
 
     # Check results
     steering_pos_final = knuckle.get_steering_attachment_position(unit='m')
-    upper_ball_joint_after = knuckle.get_attachment_position("upper_ball_joint", absolute=True, unit='m')
-    lower_ball_joint_after = knuckle.get_attachment_position("lower_ball_joint", absolute=True, unit='m')
+    upper_ball_joint_after = knuckle.get_attachment_position("upper_ball_joint", unit='m')
+    lower_ball_joint_after = knuckle.get_attachment_position("lower_ball_joint", unit='m')
 
     print(f"\nAfter steering input:")
     print(f"Final steering attachment position (m): {steering_pos_final}")
     print(f"Steering position error: {np.linalg.norm(steering_pos_final - steering_target):.9f} m (should be ~0)")
     print(f"Upper ball joint after (m): {upper_ball_joint_after}")
     print(f"Lower ball joint after (m): {lower_ball_joint_after}")
-    print(f"Upper ball joint movement (mm): {from_mm(np.linalg.norm(knuckle.tire_center + knuckle.rotation_matrix @ knuckle.attachment_points[0].position - to_mm(upper_ball_joint_before, 'm')), 'mm'):.3f}")
-    print(f"Lower ball joint movement (mm): {from_mm(np.linalg.norm(knuckle.tire_center + knuckle.rotation_matrix @ knuckle.attachment_points[1].position - to_mm(lower_ball_joint_before, 'm')), 'mm'):.3f}")
+    print(f"Upper ball joint movement (mm): {from_mm(np.linalg.norm(to_mm(upper_ball_joint_after, 'm') - to_mm(upper_ball_joint_before, 'm')), 'mm'):.3f}")
+    print(f"Lower ball joint movement (mm): {from_mm(np.linalg.norm(to_mm(lower_ball_joint_after, 'm') - to_mm(lower_ball_joint_before, 'm')), 'mm'):.3f}")
     print(f"Toe after: {np.degrees(knuckle.toe_angle):.3f}°")
     print(f"Toe change: {np.degrees(knuckle.toe_angle - np.radians(0.5)):.3f}° (from initial 0.5°)")
     print(f"RMS error for other attachments (mm): {rms_error_steering:.3f}")
+
+    # Test inheritance
+    print("\n--- Testing inheritance ---")
+    print(f"isinstance(knuckle, RigidBody): {isinstance(knuckle, RigidBody)}")
 
     print("\n✓ All tests completed successfully!")
