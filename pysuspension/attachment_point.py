@@ -2,10 +2,10 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Union, Tuple, List, Optional, TYPE_CHECKING
 from .units import to_mm, from_mm
-from .joint_types import JointType
 
 if TYPE_CHECKING:
     from typing import Set
+    from .suspension_joint import SuspensionJoint
 
 
 @dataclass
@@ -15,22 +15,25 @@ class AttachmentPoint:
 
     All positions are stored internally in millimeters (mm).
 
+    Connection information is stored in a SuspensionJoint object that this attachment point
+    references. The joint defines the type (ball joint, bushing, etc.) and connects all
+    attachment points at that location.
+
     Attributes:
         name: Identifier for the attachment point
         position: 3D position vector [x, y, z]
         is_relative: True if relative to parent component, False if absolute
         unit: Unit of input position
-        joint_type: Type of joint at this attachment point (default: JointType.BALL_JOINT)
         parent_component: Optional reference to the component this attachment point belongs to
+        joint: Optional reference to the SuspensionJoint connecting this point to others
     """
     name: str
     position: Union[np.ndarray, Tuple[float, float, float]]  # 3D position vector [x, y, z]
     is_relative: bool = True  # True if relative to parent component, False if absolute
     unit: str = 'mm'  # Unit of input position
-    joint_type: JointType = JointType.BALL_JOINT  # Type of joint at this attachment point
     parent_component: Optional[object] = None  # Reference to the owning component
+    joint: Optional['SuspensionJoint'] = None  # Reference to the joint connecting this point
     _position_mm: np.ndarray = field(init=False, repr=False)
-    _connected_points: List['AttachmentPoint'] = field(init=False, repr=False, default_factory=list)
 
     def __post_init__(self):
         # Convert position to mm and store internally
@@ -40,8 +43,6 @@ class AttachmentPoint:
         self._position_mm = to_mm(pos_array, self.unit)
         # Keep position attribute for backward compatibility, but store in mm
         self.position = self._position_mm
-        # Initialize connected points list
-        self._connected_points = []
 
     def get_position(self, unit: str = 'mm') -> np.ndarray:
         """
@@ -69,131 +70,130 @@ class AttachmentPoint:
         self._position_mm = to_mm(pos_array, unit)
         self.position = self._position_mm
 
-    def connect_to(self, other: 'AttachmentPoint', bidirectional: bool = True) -> None:
+    def connect_to(self, other: 'AttachmentPoint', joint: 'SuspensionJoint') -> None:
         """
-        Connect this attachment point to another attachment point.
+        Connect this attachment point to another through a suspension joint.
 
         Args:
             other: The attachment point to connect to
-            bidirectional: If True, also add this point to other's connections (default: True)
+            joint: The SuspensionJoint that connects these points
         """
-        if other not in self._connected_points:
-            self._connected_points.append(other)
+        joint.add_attachment_point(self)
+        joint.add_attachment_point(other)
 
-        if bidirectional and self not in other._connected_points:
-            other._connected_points.append(self)
-
-    def disconnect_from(self, other: 'AttachmentPoint', bidirectional: bool = True) -> None:
+    def disconnect_from(self, other: 'AttachmentPoint') -> None:
         """
         Disconnect this attachment point from another attachment point.
 
+        If both points share a joint, this will remove both points from that joint.
+
         Args:
             other: The attachment point to disconnect from
-            bidirectional: If True, also remove this point from other's connections (default: True)
         """
-        if other in self._connected_points:
-            self._connected_points.remove(other)
-
-        if bidirectional and self in other._connected_points:
-            other._connected_points.remove(self)
+        if self.joint is not None and other in self.joint.get_connected_points(self):
+            joint = self.joint
+            joint.remove_attachment_point(self)
+            joint.remove_attachment_point(other)
 
     def get_connected_points(self) -> List['AttachmentPoint']:
         """
-        Get all attachment points connected to this one.
+        Get all attachment points connected to this one through its joint.
 
         Returns:
-            List of connected AttachmentPoint objects
+            List of connected AttachmentPoint objects (empty if no joint)
         """
-        return self._connected_points.copy()
+        if self.joint is None:
+            return []
+        return self.joint.get_connected_points(self)
 
     def is_connected_to(self, other: 'AttachmentPoint') -> bool:
         """
-        Check if this attachment point is connected to another.
+        Check if this attachment point is connected to another through a joint.
 
         Args:
             other: The attachment point to check
 
         Returns:
-            True if connected, False otherwise
+            True if connected through a joint, False otherwise
         """
-        return other in self._connected_points
+        if self.joint is None:
+            return False
+        return other in self.joint.get_connected_points(self)
 
-    def clear_connections(self, bidirectional: bool = True) -> None:
+    def clear_connections(self) -> None:
         """
-        Clear all connections from this attachment point.
-
-        Args:
-            bidirectional: If True, also remove this point from all connected points (default: True)
+        Clear the connection from this attachment point by removing it from its joint.
         """
-        if bidirectional:
-            for point in self._connected_points:
-                if self in point._connected_points:
-                    point._connected_points.remove(self)
-
-        self._connected_points.clear()
+        if self.joint is not None:
+            self.joint.remove_attachment_point(self)
 
     def copy(self) -> 'AttachmentPoint':
         """
-        Create a copy of this attachment point without connections.
+        Create a copy of this attachment point without joint connection.
 
         Returns:
-            New AttachmentPoint with same name, position, and properties but no connections
+            New AttachmentPoint with same name, position, and properties but no joint
         """
         return AttachmentPoint(
             name=self.name,
             position=self._position_mm.copy(),
             is_relative=self.is_relative,
             unit='mm',
-            joint_type=self.joint_type,
-            parent_component=self.parent_component
+            parent_component=self.parent_component,
+            joint=None  # Don't copy joint connection
         )
 
     def to_dict(self) -> dict:
         """
         Serialize the attachment point to a dictionary.
 
-        Note: parent_component and connections are not serialized to avoid circular references.
-        These should be reconstructed when deserializing the parent component.
+        Note: parent_component and joint are not fully serialized to avoid circular references.
+        Only the joint name is included if a joint exists. The parent component should handle
+        reconstructing joint connections.
 
         Returns:
             Dictionary representation suitable for JSON serialization
         """
-        return {
+        result = {
             'name': self.name,
             'position': self._position_mm.tolist(),  # Convert numpy array to list
             'is_relative': self.is_relative,
             'unit': 'mm',  # Always serialize in mm for consistency
-            'joint_type': self.joint_type.value  # Serialize enum as string value
         }
+        # Include joint name if connected to a joint
+        if self.joint is not None:
+            result['joint_name'] = self.joint.name
+        return result
 
     @classmethod
     def from_dict(cls, data: dict, parent_component: Optional[object] = None) -> 'AttachmentPoint':
         """
         Deserialize an attachment point from a dictionary.
 
+        Note: Joint connections are not restored here. The parent component should handle
+        reconstructing joint connections using the joint_name field if present.
+
+        For backward compatibility, if an old 'joint_type' field is present, it is ignored.
+        Joint information should now be stored in SuspensionJoint objects.
+
         Args:
             data: Dictionary containing attachment point data
             parent_component: Optional parent component to associate with this point
 
         Returns:
-            New AttachmentPoint instance
+            New AttachmentPoint instance (without joint connection)
 
         Raises:
             KeyError: If required fields are missing
             ValueError: If data is invalid
         """
-        # Deserialize joint_type from string value
-        joint_type = JointType.BALL_JOINT  # Default
-        if 'joint_type' in data:
-            joint_type = JointType(data['joint_type'])
-
         return cls(
             name=data['name'],
             position=data['position'],
             is_relative=data.get('is_relative', True),
             unit=data.get('unit', 'mm'),
-            joint_type=joint_type,
-            parent_component=parent_component
+            parent_component=parent_component,
+            joint=None  # Joint will be reconnected by parent component if needed
         )
 
 

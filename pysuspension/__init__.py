@@ -34,6 +34,9 @@ from .suspension_link import SuspensionLink
 from .attachment_point import AttachmentPoint
 from .coil_spring import CoilSpring
 
+# Joints - connections between attachment points
+from .suspension_joint import SuspensionJoint
+
 # Joint types and stiffness
 from .joint_types import JointType, JOINT_STIFFNESS
 
@@ -100,6 +103,9 @@ __all__ = [
     'SuspensionLink',
     'AttachmentPoint',
     'CoilSpring',
+
+    # Joints
+    'SuspensionJoint',
 
     # Joint types
     'JointType',
