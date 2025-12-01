@@ -13,6 +13,41 @@ from .attachment_point import AttachmentPoint
 from .joint_types import JointType, JOINT_STIFFNESS
 
 
+def _infer_joint_type_from_points(*points: AttachmentPoint, default: JointType = JointType.BALL_JOINT) -> JointType:
+    """
+    Infer joint type from attachment points' SuspensionJoint connections.
+
+    For multiple points:
+    - If all points share the same joint, use that joint's type
+    - If points have different or no joints, use the default
+
+    For single point:
+    - If point has a joint, use that joint's type
+    - Otherwise use the default
+
+    Args:
+        *points: AttachmentPoint objects to check
+        default: Default joint type if none can be inferred
+
+    Returns:
+        Inferred JointType
+    """
+    joints = [p.joint for p in points if p.joint is not None]
+
+    if not joints:
+        # No joints found, use default
+        return default
+
+    # Check if all points that have joints share the same joint
+    first_joint = joints[0]
+    if all(j is first_joint for j in joints):
+        # All points share the same joint
+        return first_joint.joint_type
+
+    # Points have different joints - use default
+    return default
+
+
 class Constraint(ABC):
     """
     Base class for all constraints with compliance modeling.
@@ -162,21 +197,29 @@ class DistanceConstraint(GeometricConstraint):
                  point2: AttachmentPoint,
                  target_distance: float,
                  name: Optional[str] = None,
-                 joint_type: JointType = JointType.RIGID,
+                 joint_type: Optional[JointType] = JointType.RIGID,
                  stiffness: Optional[float] = None):
         """
         Initialize a distance constraint.
+
+        If joint_type is explicitly set to None, it will be automatically inferred from
+        the SuspensionJoint objects. Otherwise defaults to RIGID (for rigid links).
 
         Args:
             point1: First endpoint
             point2: Second endpoint
             target_distance: Desired distance in mm
             name: Constraint name (auto-generated if None)
-            joint_type: RIGID for solid links, CUSTOM for flexible
+            joint_type: RIGID for solid links (default), None for auto-detection
             stiffness: For flexible links, axial stiffness in N/mm
         """
         if name is None:
             name = f"distance_{point1.name}_{point2.name}"
+
+        # Auto-detect joint type only if explicitly set to None
+        # (default is RIGID for distance constraints)
+        if joint_type is None:
+            joint_type = _infer_joint_type_from_points(point1, point2, default=JointType.RIGID)
 
         super().__init__(name, joint_type=joint_type, stiffness=stiffness)
         self.point1 = point1
@@ -254,20 +297,27 @@ class FixedPointConstraint(GeometricConstraint):
                  point: AttachmentPoint,
                  target_position: np.ndarray,
                  name: Optional[str] = None,
-                 joint_type: JointType = JointType.RIGID,
+                 joint_type: Optional[JointType] = JointType.RIGID,
                  stiffness: Optional[float] = None):
         """
         Initialize a fixed point constraint.
+
+        If joint_type is explicitly set to None, it will be automatically inferred from
+        the SuspensionJoint object. Otherwise defaults to RIGID (for chassis mounts).
 
         Args:
             point: Point to be fixed
             target_position: Target position in mm (3D array)
             name: Constraint name (auto-generated if None)
-            joint_type: Usually RIGID for chassis mounts
+            joint_type: Usually RIGID for chassis mounts (default), None for auto-detection
             stiffness: Custom stiffness in N/mm
         """
         if name is None:
             name = f"fixed_{point.name}"
+
+        # Auto-detect joint type only if explicitly set to None
+        if joint_type is None:
+            joint_type = _infer_joint_type_from_points(point, default=JointType.RIGID)
 
         super().__init__(name, joint_type=joint_type, stiffness=stiffness)
         self.point = point
@@ -334,20 +384,28 @@ class CoincidentPointConstraint(GeometricConstraint):
                  point1: AttachmentPoint,
                  point2: AttachmentPoint,
                  name: Optional[str] = None,
-                 joint_type: JointType = JointType.BALL_JOINT,
+                 joint_type: Optional[JointType] = None,
                  stiffness: Optional[float] = None):
         """
         Initialize a coincident point constraint.
+
+        If joint_type is not specified, it will be automatically inferred from the
+        SuspensionJoint objects connected to the attachment points. If both points
+        share the same joint, that joint's type is used. Otherwise defaults to BALL_JOINT.
 
         Args:
             point1: First point
             point2: Second point (should coincide with first)
             name: Constraint name (auto-generated if None)
-            joint_type: Type of joint (ball joint, bushing, etc.)
+            joint_type: Type of joint (auto-detected from SuspensionJoint if None)
             stiffness: Custom stiffness in N/mm (overrides joint_type)
         """
         if name is None:
             name = f"coincident_{point1.name}_{point2.name}"
+
+        # Auto-detect joint type if not specified
+        if joint_type is None:
+            joint_type = _infer_joint_type_from_points(point1, point2, default=JointType.BALL_JOINT)
 
         super().__init__(name, joint_type=joint_type, stiffness=stiffness)
         self.point1 = point1
@@ -419,10 +477,13 @@ class PartialPositionConstraint(GeometricConstraint):
                  target_position: np.ndarray,
                  constrain_axes: List[str],
                  name: Optional[str] = None,
-                 joint_type: JointType = JointType.RIGID,
+                 joint_type: Optional[JointType] = JointType.RIGID,
                  stiffness: Optional[float] = None):
         """
         Initialize a partial position constraint.
+
+        If joint_type is explicitly set to None, it will be automatically inferred from
+        the SuspensionJoint object. Otherwise defaults to RIGID.
 
         Args:
             point: Point to be constrained
@@ -430,7 +491,7 @@ class PartialPositionConstraint(GeometricConstraint):
             constrain_axes: List of axes to constrain: ['x'], ['y'], ['z'],
                            ['x', 'y'], ['x', 'z'], ['y', 'z'], or ['x', 'y', 'z']
             name: Constraint name (auto-generated if None)
-            joint_type: Usually RIGID for hard constraints
+            joint_type: Usually RIGID for hard constraints (default), None for auto-detection
             stiffness: Custom stiffness in N/mm
 
         Examples:
@@ -446,6 +507,10 @@ class PartialPositionConstraint(GeometricConstraint):
         if name is None:
             axes_str = '_'.join(sorted(constrain_axes))
             name = f"partial_{point.name}_{axes_str}"
+
+        # Auto-detect joint type only if explicitly set to None
+        if joint_type is None:
+            joint_type = _infer_joint_type_from_points(point, default=JointType.RIGID)
 
         super().__init__(name, joint_type=joint_type, stiffness=stiffness)
         self.point = point
