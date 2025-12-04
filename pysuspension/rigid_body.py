@@ -68,35 +68,63 @@ class RigidBody:
         self._original_state_frozen = False
 
     def add_attachment_point(self,
-                            name: str,
-                            position: Union[np.ndarray, Tuple[float, float, float]],
+                            name_or_attachment: Union[str, AttachmentPoint],
+                            position: Optional[Union[np.ndarray, Tuple[float, float, float]]] = None,
                             unit: str = 'mm') -> AttachmentPoint:
         """
         Add an attachment point to this rigid body.
 
+        Can be called in two ways:
+        1. Pass an existing AttachmentPoint object:
+           add_attachment_point(attachment_point)
+        2. Create a new AttachmentPoint from parameters:
+           add_attachment_point(name, position, unit='mm')
+
         Args:
-            name: Identifier for the attachment point
-            position: 3D position [x, y, z] in absolute coordinates
+            name_or_attachment: Either an AttachmentPoint object or a name string
+            position: 3D position [x, y, z] in absolute coordinates (required if name_or_attachment is a string)
             unit: Unit of input position (default: 'mm')
 
         Returns:
-            The created AttachmentPoint object
+            The AttachmentPoint object (either the one passed in or newly created)
+
+        Raises:
+            ValueError: If name_or_attachment is a string but position is not provided
         """
-        attachment = AttachmentPoint(
-            name=name,
-            position=position,
-            is_relative=False,  # All rigid body attachments use absolute positioning
-            unit=unit,
-            parent_component=self
-        )
-        self.attachment_points.append(attachment)
+        if isinstance(name_or_attachment, AttachmentPoint):
+            # Accepting an existing AttachmentPoint object
+            attachment = name_or_attachment
+            # Update parent_component reference to this rigid body
+            attachment.parent_component = self
+            self.attachment_points.append(attachment)
 
-        # Store original attachment point (copy without connections)
-        if not self._original_state_frozen:
-            self._original_state['attachment_points'].append(attachment.copy())
+            # Store original attachment point (copy without connections)
+            if not self._original_state_frozen:
+                self._original_state['attachment_points'].append(attachment.copy())
 
-        self._update_centroid()
-        return attachment
+            self._update_centroid()
+            return attachment
+        else:
+            # Creating a new AttachmentPoint from name/position/unit
+            if position is None:
+                raise ValueError("position argument is required when passing a name string")
+
+            name = name_or_attachment
+            attachment = AttachmentPoint(
+                name=name,
+                position=position,
+                is_relative=False,  # All rigid body attachments use absolute positioning
+                unit=unit,
+                parent_component=self
+            )
+            self.attachment_points.append(attachment)
+
+            # Store original attachment point (copy without connections)
+            if not self._original_state_frozen:
+                self._original_state['attachment_points'].append(attachment.copy())
+
+            self._update_centroid()
+            return attachment
 
     def get_attachment_point(self, name: str) -> Optional[AttachmentPoint]:
         """

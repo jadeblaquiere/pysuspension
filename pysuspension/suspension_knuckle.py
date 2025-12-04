@@ -112,21 +112,29 @@ class SuspensionKnuckle(RigidBody):
         # Wheel mounting plane center point in relative coordinates
         self.mounting_plane_center_relative = self.wheel_offset * self.tire_axis_relative
     
-    def add_attachment_point(self, name: str, position: Tuple[float, float, float],
+    def add_attachment_point(self,
+                            name_or_attachment: Union[str, AttachmentPoint],
+                            position: Optional[Union[np.ndarray, Tuple[float, float, float]]] = None,
                             unit: str = 'mm') -> AttachmentPoint:
         """
         Add an attachment point to the knuckle (absolute positioning only).
 
+        Can be called in two ways:
+        1. Pass an existing AttachmentPoint object:
+           add_attachment_point(attachment_point)
+        2. Create a new AttachmentPoint from parameters:
+           add_attachment_point(name, position, unit='mm')
+
         Args:
-            name: Identifier for the attachment point
-            position: 3D position [x, y, z] in absolute coordinates
+            name_or_attachment: Either an AttachmentPoint object or a name string
+            position: 3D position [x, y, z] in absolute coordinates (required if name_or_attachment is a string)
             unit: Unit of input position (default: 'mm')
 
         Returns:
-            The created AttachmentPoint object
+            The AttachmentPoint object (either the one passed in or newly created)
         """
-        # Use parent's add_attachment_point (which handles absolute positioning)
-        return super().add_attachment_point(name, position, unit=unit)
+        # Use parent's add_attachment_point (which handles both signatures)
+        return super().add_attachment_point(name_or_attachment, position, unit=unit)
     
     def get_attachment_position(self, name: str, unit: str = 'mm') -> np.ndarray:
         """

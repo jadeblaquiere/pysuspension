@@ -25,30 +25,56 @@ class ChassisCorner:
         # Store original state for reset
         self._original_attachment_points: List[AttachmentPoint] = []
 
-    def add_attachment_point(self, name: str, position: Union[np.ndarray, Tuple[float, float, float]],
+    def add_attachment_point(self,
+                            name_or_attachment: Union[str, AttachmentPoint],
+                            position: Optional[Union[np.ndarray, Tuple[float, float, float]]] = None,
                             unit: str = 'mm') -> AttachmentPoint:
         """
         Add an attachment point to this corner.
 
+        Can be called in two ways:
+        1. Pass an existing AttachmentPoint object:
+           add_attachment_point(attachment_point)
+        2. Create a new AttachmentPoint from parameters:
+           add_attachment_point(name, position, unit='mm')
+
         Args:
-            name: Identifier for the attachment point
-            position: 3D position [x, y, z]
+            name_or_attachment: Either an AttachmentPoint object or a name string
+            position: 3D position [x, y, z] (required if name_or_attachment is a string)
             unit: Unit of input position (default: 'mm')
 
         Returns:
-            The created AttachmentPoint object
+            The AttachmentPoint object (either the one passed in or newly created)
+
+        Raises:
+            ValueError: If name_or_attachment is a string but position is not provided
         """
-        attachment = AttachmentPoint(
-            name=name,
-            position=position,
-            is_relative=False,  # Chassis attachment points are in absolute coordinates
-            unit=unit,
-            parent_component=self
-        )
-        self.attachment_points.append(attachment)
-        # Store original attachment point (copy without connections)
-        self._original_attachment_points.append(attachment.copy())
-        return attachment
+        if isinstance(name_or_attachment, AttachmentPoint):
+            # Accepting an existing AttachmentPoint object
+            attachment = name_or_attachment
+            # Update parent_component reference to this corner
+            attachment.parent_component = self
+            self.attachment_points.append(attachment)
+            # Store original attachment point (copy without connections)
+            self._original_attachment_points.append(attachment.copy())
+            return attachment
+        else:
+            # Creating a new AttachmentPoint from name/position/unit
+            if position is None:
+                raise ValueError("position argument is required when passing a name string")
+
+            name = name_or_attachment
+            attachment = AttachmentPoint(
+                name=name,
+                position=position,
+                is_relative=False,  # Chassis attachment points are in absolute coordinates
+                unit=unit,
+                parent_component=self
+            )
+            self.attachment_points.append(attachment)
+            # Store original attachment point (copy without connections)
+            self._original_attachment_points.append(attachment.copy())
+            return attachment
 
     def get_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
         """
