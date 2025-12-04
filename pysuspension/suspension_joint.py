@@ -47,7 +47,8 @@ class SuspensionJoint:
         Args:
             point: AttachmentPoint to connect to this joint
         """
-        if point not in self.attachment_points:
+        # Use identity comparison to avoid numpy array comparison issues
+        if not any(p is point for p in self.attachment_points):
             self.attachment_points.append(point)
             # Set the back-reference on the attachment point
             if point.joint is not self:
@@ -60,11 +61,15 @@ class SuspensionJoint:
         Args:
             point: AttachmentPoint to disconnect from this joint
         """
-        if point in self.attachment_points:
-            self.attachment_points.remove(point)
-            # Clear the back-reference on the attachment point
-            if point.joint is self:
-                point.joint = None
+        # Use identity comparison to avoid numpy array comparison issues
+        # Find and remove by identity
+        for i, p in enumerate(self.attachment_points):
+            if p is point:
+                self.attachment_points.pop(i)
+                # Clear the back-reference on the attachment point
+                if point.joint is self:
+                    point.joint = None
+                break
 
     def get_connected_points(self, point: 'AttachmentPoint') -> List['AttachmentPoint']:
         """
