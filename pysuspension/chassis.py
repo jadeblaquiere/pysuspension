@@ -1,9 +1,38 @@
 import numpy as np
-from typing import List, Tuple, Union, Dict
+from typing import List, Tuple, Union, Dict, Optional, TYPE_CHECKING
 from .rigid_body import RigidBody
 from .units import to_mm, from_mm
 from .chassis_corner import ChassisCorner
 from .chassis_axle import ChassisAxle
+
+if TYPE_CHECKING:
+    from .suspension_joint import SuspensionJoint
+    from .attachment_point import AttachmentPoint
+
+# Component type registry for deserialization
+# Import these only when needed to avoid circular imports
+def _get_component_type_registry():
+    """
+    Get the component type registry for serialization/deserialization.
+
+    Imports are done inside the function to avoid circular import issues.
+
+    Returns:
+        Dictionary mapping type names to component classes
+    """
+    from .control_arm import ControlArm
+    from .suspension_knuckle import SuspensionKnuckle
+    from .suspension_link import SuspensionLink
+    from .steering_rack import SteeringRack
+    from .coil_spring import CoilSpring
+
+    return {
+        'ControlArm': ControlArm,
+        'SuspensionKnuckle': SuspensionKnuckle,
+        'SuspensionLink': SuspensionLink,
+        'SteeringRack': SteeringRack,
+        'CoilSpring': CoilSpring,
+    }
 
 
 class Chassis(RigidBody):
@@ -28,6 +57,10 @@ class Chassis(RigidBody):
 
         self.corners: Dict[str, ChassisCorner] = {}
         self.axles: Dict[str, ChassisAxle] = {}
+
+        # Component tracking for comprehensive serialization
+        self.components: Dict[str, RigidBody] = {}  # All suspension components
+        self.joints: Dict[str, 'SuspensionJoint'] = {}  # All joints in system
 
     def add_corner(self, corner: ChassisCorner) -> None:
         """
@@ -116,6 +149,57 @@ class Chassis(RigidBody):
         if name not in self.axles:
             raise ValueError(f"Axle '{name}' not found")
         return self.axles[name]
+
+    def add_component(self, name: str, component: RigidBody) -> None:
+        """
+        Register a suspension component with this chassis.
+
+        This enables comprehensive serialization of the entire suspension system.
+
+        Args:
+            name: Unique identifier for the component
+            component: Suspension component (ControlArm, SuspensionKnuckle, etc.)
+
+        Raises:
+            ValueError: If component name already exists
+        """
+        if name in self.components:
+            raise ValueError(f"Component '{name}' already exists")
+        self.components[name] = component
+
+    def add_joint(self, joint: 'SuspensionJoint') -> None:
+        """
+        Register a suspension joint with this chassis.
+
+        This enables comprehensive serialization of all joint connections.
+
+        Args:
+            joint: SuspensionJoint connecting components
+
+        Raises:
+            ValueError: If joint name already exists
+        """
+        if joint.name in self.joints:
+            raise ValueError(f"Joint '{joint.name}' already exists")
+        self.joints[joint.name] = joint
+
+    def get_all_components(self) -> Dict[str, RigidBody]:
+        """
+        Get all registered suspension components.
+
+        Returns:
+            Dictionary mapping component names to component objects
+        """
+        return self.components.copy()
+
+    def get_all_joints(self) -> Dict[str, 'SuspensionJoint']:
+        """
+        Get all registered suspension joints.
+
+        Returns:
+            Dictionary mapping joint names to joint objects
+        """
+        return self.joints.copy()
 
     def _update_centroid(self) -> None:
         """
@@ -287,6 +371,212 @@ class Chassis(RigidBody):
             chassis.add_axle(axle)
 
         return chassis
+
+    def to_dict_full(self) -> dict:
+        """
+        Serialize the entire suspension system including all components and joints.
+
+        This provides comprehensive serialization that captures:
+        - Chassis with corners and axles
+        - All registered suspension components
+        - All suspension joints connecting components
+
+        Returns:
+            Dictionary representation of the complete suspension system
+
+        Note:
+            Uses to_dict_full() for comprehensive serialization.
+            Use to_dict() for chassis-only serialization (backward compatible).
+        """
+        from .suspension_joint import SuspensionJoint
+
+        # Serialize chassis (corners and axles)
+        chassis_data = self.to_dict()
+
+        # Serialize all registered components
+        components_data = {}
+        for comp_name, component in self.components.items():
+            component_type = type(component).__name__
+            components_data[comp_name] = {
+                'type': component_type,
+                'data': component.to_dict()
+            }
+
+        # Serialize all registered joints
+        joints_data = {}
+        for joint_name, joint in self.joints.items():
+            # Build connection references
+            connections = []
+            for point in joint.get_all_attachment_points():
+                # Find which component owns this point
+                component_ref = self._find_component_reference(point)
+                if component_ref:
+                    connections.append({
+                        'component': component_ref,
+                        'point_name': point.name
+                    })
+
+            joints_data[joint_name] = {
+                'joint_type': joint.joint_type.value,
+                'connections': connections
+            }
+
+        return {
+            'chassis': chassis_data,
+            'components': components_data,
+            'joints': joints_data
+        }
+
+    def _find_component_reference(self, point: 'AttachmentPoint') -> Optional[str]:
+        """
+        Find the reference path to a component owning an attachment point.
+
+        Args:
+            point: AttachmentPoint to locate
+
+        Returns:
+            Component reference string (e.g., 'chassis.corners.front_left' or 'upper_arm_fl')
+            None if not found
+        """
+        # Check registered components
+        for comp_name, component in self.components.items():
+            if hasattr(component, 'attachment_points'):
+                for ap in component.attachment_points:
+                    if ap is point:
+                        return comp_name
+            # Check SuspensionLink endpoints
+            if hasattr(component, 'endpoint1') and component.endpoint1 is point:
+                return comp_name
+            if hasattr(component, 'endpoint2') and component.endpoint2 is point:
+                return comp_name
+
+        # Check chassis corners
+        for corner_name, corner in self.corners.items():
+            for ap in corner.attachment_points:
+                if ap is point:
+                    return f"chassis.corners.{corner_name}"
+
+        # Check chassis axles
+        for axle_name, axle in self.axles.items():
+            for ap in axle.attachment_points:
+                if ap is point:
+                    return f"chassis.axles.{axle_name}"
+
+        # Check chassis attachment points (if any)
+        if hasattr(self, 'attachment_points'):
+            for ap in self.attachment_points:
+                if ap is point:
+                    return "chassis"
+
+        return None
+
+    @classmethod
+    def from_dict_full(cls, data: dict) -> 'Chassis':
+        """
+        Deserialize a complete suspension system from a dictionary.
+
+        Reconstructs:
+        - Chassis with corners and axles
+        - All suspension components
+        - All suspension joints with proper connections
+
+        Args:
+            data: Dictionary containing complete suspension system data
+
+        Returns:
+            Chassis instance with all components and joints registered
+
+        Raises:
+            KeyError: If required fields are missing
+            ValueError: If data is invalid or component types unknown
+        """
+        from .suspension_joint import SuspensionJoint
+        from .joint_types import JointType
+
+        # Get component type registry
+        component_registry = _get_component_type_registry()
+
+        # Phase 1: Deserialize chassis
+        chassis = cls.from_dict(data['chassis'])
+
+        # Phase 2: Deserialize all components
+        for comp_name, comp_data in data.get('components', {}).items():
+            comp_type = comp_data['type']
+            comp_dict = comp_data['data']
+
+            if comp_type not in component_registry:
+                raise ValueError(f"Unknown component type: {comp_type}")
+
+            component_class = component_registry[comp_type]
+            component = component_class.from_dict(comp_dict)
+
+            # Register component with chassis
+            chassis.add_component(comp_name, component)
+
+        # Phase 3: Build lookup table for attachment points
+        point_lookup = chassis._build_attachment_point_lookup()
+
+        # Phase 4: Reconstruct all joints
+        for joint_name, joint_data in data.get('joints', {}).items():
+            joint_type = JointType(joint_data['joint_type'])
+            joint = SuspensionJoint(joint_name, joint_type)
+
+            # Reconnect all attachment points
+            for conn in joint_data['connections']:
+                component_ref = conn['component']
+                point_name = conn['point_name']
+
+                # Lookup the attachment point
+                point = point_lookup.get(f"{component_ref}.{point_name}")
+                if point is None:
+                    raise ValueError(
+                        f"Could not find attachment point '{point_name}' "
+                        f"in component '{component_ref}' for joint '{joint_name}'"
+                    )
+
+                joint.add_attachment_point(point)
+
+            # Register joint with chassis
+            chassis.add_joint(joint)
+
+        return chassis
+
+    def _build_attachment_point_lookup(self) -> Dict[str, 'AttachmentPoint']:
+        """
+        Build a lookup table mapping component references to attachment points.
+
+        Returns:
+            Dictionary mapping 'component_ref.point_name' to AttachmentPoint objects
+        """
+        lookup = {}
+
+        # Add registered components
+        for comp_name, component in self.components.items():
+            if hasattr(component, 'attachment_points'):
+                for ap in component.attachment_points:
+                    lookup[f"{comp_name}.{ap.name}"] = ap
+            # Handle SuspensionLink endpoints
+            if hasattr(component, 'endpoint1'):
+                lookup[f"{comp_name}.{component.endpoint1.name}"] = component.endpoint1
+            if hasattr(component, 'endpoint2'):
+                lookup[f"{comp_name}.{component.endpoint2.name}"] = component.endpoint2
+
+        # Add chassis corners
+        for corner_name, corner in self.corners.items():
+            for ap in corner.attachment_points:
+                lookup[f"chassis.corners.{corner_name}.{ap.name}"] = ap
+
+        # Add chassis axles
+        for axle_name, axle in self.axles.items():
+            for ap in axle.attachment_points:
+                lookup[f"chassis.axles.{axle_name}.{ap.name}"] = ap
+
+        # Add chassis attachment points (if any)
+        if hasattr(self, 'attachment_points'):
+            for ap in self.attachment_points:
+                lookup[f"chassis.{ap.name}"] = ap
+
+        return lookup
 
     def __repr__(self) -> str:
         total_attachments = sum(len(c.attachment_points) for c in self.corners.values())
