@@ -26,12 +26,31 @@ class SteeringRack:
     A positive travel_per_rotation indicates front-steer (rack forward of axle).
     """
 
+    @staticmethod
+    def _ensure_attachment_point(obj: Union[AttachmentPoint, np.ndarray, Tuple[float, float, float]],
+                                   name: str,
+                                   unit: str) -> AttachmentPoint:
+        """
+        Convert raw position to AttachmentPoint if needed.
+
+        Args:
+            obj: Either an AttachmentPoint or a raw position
+            name: Name to use if creating a new AttachmentPoint
+            unit: Unit of the position if creating a new AttachmentPoint
+
+        Returns:
+            AttachmentPoint object
+        """
+        if isinstance(obj, AttachmentPoint):
+            return obj
+        return AttachmentPoint(name=name, position=obj, unit=unit)
+
     def __init__(self,
-                 housing_attachments: List[Union[np.ndarray, Tuple[float, float, float]]],
-                 left_inner_pivot: Union[np.ndarray, Tuple[float, float, float]],
-                 right_inner_pivot: Union[np.ndarray, Tuple[float, float, float]],
-                 left_outer_attachment: Union[np.ndarray, Tuple[float, float, float]],
-                 right_outer_attachment: Union[np.ndarray, Tuple[float, float, float]],
+                 housing_attachments: List[Union[AttachmentPoint, np.ndarray, Tuple[float, float, float]]],
+                 left_inner_pivot: Union[AttachmentPoint, np.ndarray, Tuple[float, float, float]],
+                 right_inner_pivot: Union[AttachmentPoint, np.ndarray, Tuple[float, float, float]],
+                 left_outer_attachment: Union[AttachmentPoint, np.ndarray, Tuple[float, float, float]],
+                 right_outer_attachment: Union[AttachmentPoint, np.ndarray, Tuple[float, float, float]],
                  travel_per_rotation: float,  # mm of rack travel per degree of steering
                  max_displacement: float,  # mm maximum displacement from center
                  name: str = "steering_rack",
@@ -40,15 +59,15 @@ class SteeringRack:
         Initialize a steering rack unit.
 
         Args:
-            housing_attachments: List of ≥3 housing attachment points for chassis mounting
-            left_inner_pivot: Position of left inner tie rod pivot (on the rack)
-            right_inner_pivot: Position of right inner tie rod pivot (on the rack)
-            left_outer_attachment: Position of left outer tie rod attachment (on knuckle)
-            right_outer_attachment: Position of right outer tie rod attachment (on knuckle)
+            housing_attachments: List of ≥3 AttachmentPoint objects (or raw positions) for chassis mounting
+            left_inner_pivot: AttachmentPoint (or raw position) for left inner tie rod pivot (on the rack)
+            right_inner_pivot: AttachmentPoint (or raw position) for right inner tie rod pivot (on the rack)
+            left_outer_attachment: AttachmentPoint (or raw position) for left outer tie rod attachment (on knuckle)
+            right_outer_attachment: AttachmentPoint (or raw position) for right outer tie rod attachment (on knuckle)
             travel_per_rotation: Rack travel per degree of steering wheel rotation (in specified unit)
             max_displacement: Maximum rack displacement from center (in specified unit)
             name: Identifier for the steering rack
-            unit: Unit of input positions (default: 'mm')
+            unit: Unit of input positions if raw positions are provided (default: 'mm')
 
         Raises:
             ValueError: If fewer than 3 housing attachment points provided
@@ -58,23 +77,37 @@ class SteeringRack:
 
         self.name = name
 
+        # Convert housing attachments to AttachmentPoint objects if needed
+        housing_points = [
+            self._ensure_attachment_point(pos, f"{name}_mount_{i}", unit)
+            for i, pos in enumerate(housing_attachments)
+        ]
+
         # Create housing as a RigidBody (rigid body connected to chassis)
         self.housing = RigidBody(name=f"{name}_housing", mass=0.0, mass_unit='kg')
-        for i, pos in enumerate(housing_attachments):
-            self.housing.add_attachment_point(f"mount_{i}", pos, unit=unit)
+        for point in housing_points:
+            self.housing.add_attachment_point(point.name, point.position, unit='mm')
 
-        # Convert all rack/tie rod inputs to mm for internal storage
-        self.left_inner_pivot = to_mm(np.array(left_inner_pivot, dtype=float), unit)
-        self.right_inner_pivot = to_mm(np.array(right_inner_pivot, dtype=float), unit)
-        self.left_outer_attachment = to_mm(np.array(left_outer_attachment, dtype=float), unit)
-        self.right_outer_attachment = to_mm(np.array(right_outer_attachment, dtype=float), unit)
+        # Convert pivot/attachment inputs to AttachmentPoint objects if needed
+        self.left_inner_pivot = self._ensure_attachment_point(
+            left_inner_pivot, f"{name}_left_inner", unit
+        )
+        self.right_inner_pivot = self._ensure_attachment_point(
+            right_inner_pivot, f"{name}_right_inner", unit
+        )
+        self.left_outer_attachment = self._ensure_attachment_point(
+            left_outer_attachment, f"{name}_left_outer", unit
+        )
+        self.right_outer_attachment = self._ensure_attachment_point(
+            right_outer_attachment, f"{name}_right_outer", unit
+        )
 
         # Travel parameters (in mm)
         self.travel_per_rotation = to_mm(travel_per_rotation, unit)
         self.max_displacement = to_mm(max_displacement, unit)
 
         # Calculate rack axis (direction of travel) from inner pivot points
-        rack_vector = self.right_inner_pivot - self.left_inner_pivot
+        rack_vector = self.right_inner_pivot.position - self.left_inner_pivot.position
         self.rack_length = np.linalg.norm(rack_vector)
         if self.rack_length < 1e-6:
             raise ValueError("Inner pivot points are too close together")
@@ -82,21 +115,21 @@ class SteeringRack:
         self.rack_axis_initial = self.rack_axis.copy()
 
         # Calculate rack center position
-        self.rack_center_initial = (self.left_inner_pivot + self.right_inner_pivot) / 2.0
+        self.rack_center_initial = (self.left_inner_pivot.position + self.right_inner_pivot.position) / 2.0
         self.rack_center = self.rack_center_initial.copy()
 
         # Store initial positions for reference (used by set_turn_angle as reference)
-        self.left_inner_pivot_initial = self.left_inner_pivot.copy()
-        self.right_inner_pivot_initial = self.right_inner_pivot.copy()
-        self.left_outer_attachment_initial = self.left_outer_attachment.copy()
-        self.right_outer_attachment_initial = self.right_outer_attachment.copy()
+        self.left_inner_pivot_initial = self.left_inner_pivot.position.copy()
+        self.right_inner_pivot_initial = self.right_inner_pivot.position.copy()
+        self.left_outer_attachment_initial = self.left_outer_attachment.position.copy()
+        self.right_outer_attachment_initial = self.right_outer_attachment.position.copy()
 
         # Store original positions for reset (never updated by transformations)
         # Note: Housing original positions are now managed by self.housing (RigidBody)
-        self._original_left_inner_pivot = self.left_inner_pivot.copy()
-        self._original_right_inner_pivot = self.right_inner_pivot.copy()
-        self._original_left_outer_attachment = self.left_outer_attachment.copy()
-        self._original_right_outer_attachment = self.right_outer_attachment.copy()
+        self._original_left_inner_pivot = self.left_inner_pivot.position.copy()
+        self._original_right_inner_pivot = self.right_inner_pivot.position.copy()
+        self._original_left_outer_attachment = self.left_outer_attachment.position.copy()
+        self._original_right_outer_attachment = self.right_outer_attachment.position.copy()
         self._original_rack_center = self.rack_center.copy()
         self._original_rack_axis = self.rack_axis.copy()
 
@@ -104,16 +137,17 @@ class SteeringRack:
         self.current_displacement = 0.0
 
         # Create tie rod links (left and right)
+        # SuspensionLink expects positions, so we pass the position from AttachmentPoint
         self.left_tie_rod = SuspensionLink(
-            endpoint1=self.left_inner_pivot,
-            endpoint2=self.left_outer_attachment,
+            endpoint1=self.left_inner_pivot.position,
+            endpoint2=self.left_outer_attachment.position,
             name=f"{name}_left_tie_rod",
             unit='mm'
         )
 
         self.right_tie_rod = SuspensionLink(
-            endpoint1=self.right_inner_pivot,
-            endpoint2=self.right_outer_attachment,
+            endpoint1=self.right_inner_pivot.position,
+            endpoint2=self.right_outer_attachment.position,
             name=f"{name}_right_tie_rod",
             unit='mm'
         )
@@ -145,19 +179,26 @@ class SteeringRack:
         # Update inner pivot positions along rack axis
         displacement_vector = displacement * self.rack_axis
 
-        self.left_inner_pivot = self.left_inner_pivot_initial + displacement_vector
-        self.right_inner_pivot = self.right_inner_pivot_initial + displacement_vector
+        # Calculate new positions
+        new_left_inner = self.left_inner_pivot_initial + displacement_vector
+        new_right_inner = self.right_inner_pivot_initial + displacement_vector
         self.rack_center = self.rack_center_initial + displacement_vector
 
         # Move outer tie rod endpoints the same distance to maintain tie rod length
-        self.left_outer_attachment = self.left_outer_attachment_initial + displacement_vector
-        self.right_outer_attachment = self.right_outer_attachment_initial + displacement_vector
+        new_left_outer = self.left_outer_attachment_initial + displacement_vector
+        new_right_outer = self.right_outer_attachment_initial + displacement_vector
+
+        # Update AttachmentPoint positions
+        self.left_inner_pivot.set_position(new_left_inner, unit='mm')
+        self.right_inner_pivot.set_position(new_right_inner, unit='mm')
+        self.left_outer_attachment.set_position(new_left_outer, unit='mm')
+        self.right_outer_attachment.set_position(new_right_outer, unit='mm')
 
         # Update tie rod endpoints (use set_position on AttachmentPoint)
-        self.left_tie_rod.endpoint1.set_position(self.left_inner_pivot, unit='mm')
-        self.left_tie_rod.endpoint2.set_position(self.left_outer_attachment, unit='mm')
-        self.right_tie_rod.endpoint1.set_position(self.right_inner_pivot, unit='mm')
-        self.right_tie_rod.endpoint2.set_position(self.right_outer_attachment, unit='mm')
+        self.left_tie_rod.endpoint1.set_position(new_left_inner, unit='mm')
+        self.left_tie_rod.endpoint2.set_position(new_left_outer, unit='mm')
+        self.right_tie_rod.endpoint1.set_position(new_right_inner, unit='mm')
+        self.right_tie_rod.endpoint2.set_position(new_right_outer, unit='mm')
 
         # Update tie rod geometry
         self.left_tie_rod._update_local_frame()
@@ -227,22 +268,29 @@ class SteeringRack:
         self.rack_center = R @ self.rack_center + t
         self.rack_center_initial = R @ self.rack_center_initial + t
 
-        self.left_inner_pivot = R @ self.left_inner_pivot + t
-        self.right_inner_pivot = R @ self.right_inner_pivot + t
+        # Transform inner pivot positions
+        new_left_inner = R @ self.left_inner_pivot.position + t
+        new_right_inner = R @ self.right_inner_pivot.position + t
         self.left_inner_pivot_initial = R @ self.left_inner_pivot_initial + t
         self.right_inner_pivot_initial = R @ self.right_inner_pivot_initial + t
 
         # Apply transformation to outer tie rod endpoints
-        self.left_outer_attachment = R @ self.left_outer_attachment + t
-        self.right_outer_attachment = R @ self.right_outer_attachment + t
+        new_left_outer = R @ self.left_outer_attachment.position + t
+        new_right_outer = R @ self.right_outer_attachment.position + t
         self.left_outer_attachment_initial = R @ self.left_outer_attachment_initial + t
         self.right_outer_attachment_initial = R @ self.right_outer_attachment_initial + t
 
+        # Update AttachmentPoint positions
+        self.left_inner_pivot.set_position(new_left_inner, unit='mm')
+        self.right_inner_pivot.set_position(new_right_inner, unit='mm')
+        self.left_outer_attachment.set_position(new_left_outer, unit='mm')
+        self.right_outer_attachment.set_position(new_right_outer, unit='mm')
+
         # Update tie rod endpoints
-        self.left_tie_rod.endpoint1.set_position(self.left_inner_pivot, unit='mm')
-        self.left_tie_rod.endpoint2.set_position(self.left_outer_attachment, unit='mm')
-        self.right_tie_rod.endpoint1.set_position(self.right_inner_pivot, unit='mm')
-        self.right_tie_rod.endpoint2.set_position(self.right_outer_attachment, unit='mm')
+        self.left_tie_rod.endpoint1.set_position(new_left_inner, unit='mm')
+        self.left_tie_rod.endpoint2.set_position(new_left_outer, unit='mm')
+        self.right_tie_rod.endpoint1.set_position(new_right_inner, unit='mm')
+        self.right_tie_rod.endpoint2.set_position(new_right_outer, unit='mm')
 
         # Update tie rod geometry
         self.left_tie_rod._update_local_frame()
@@ -291,21 +339,24 @@ class SteeringRack:
 
         # Fit left tie rod to target
         left_error = self.left_tie_rod.fit_to_attachment_targets(
-            [self.left_inner_pivot, target_left],
+            [self.left_inner_pivot.position, target_left],
             unit='mm'
         )
 
         # Fit right tie rod to target
         right_error = self.right_tie_rod.fit_to_attachment_targets(
-            [self.right_inner_pivot, target_right],
+            [self.right_inner_pivot.position, target_right],
             unit='mm'
         )
 
-        # Update outer attachment positions and initial positions
-        self.left_outer_attachment = self.left_tie_rod.endpoint2.position.copy()
-        self.right_outer_attachment = self.right_tie_rod.endpoint2.position.copy()
-        self.left_outer_attachment_initial = self.left_outer_attachment.copy()
-        self.right_outer_attachment_initial = self.right_outer_attachment.copy()
+        # Update outer attachment AttachmentPoint positions and initial positions
+        new_left_outer = self.left_tie_rod.endpoint2.position.copy()
+        new_right_outer = self.right_tie_rod.endpoint2.position.copy()
+
+        self.left_outer_attachment.set_position(new_left_outer, unit='mm')
+        self.right_outer_attachment.set_position(new_right_outer, unit='mm')
+        self.left_outer_attachment_initial = new_left_outer.copy()
+        self.right_outer_attachment_initial = new_right_outer.copy()
 
         # Calculate combined RMS error
         rms_error = np.sqrt((left_error**2 + right_error**2) / 2.0)
@@ -364,14 +415,14 @@ class SteeringRack:
         self.rack_axis_initial = self._original_rack_axis.copy()
 
         # Reset inner pivots to original positions
-        self.left_inner_pivot = self._original_left_inner_pivot.copy()
-        self.right_inner_pivot = self._original_right_inner_pivot.copy()
+        self.left_inner_pivot.set_position(self._original_left_inner_pivot, unit='mm')
+        self.right_inner_pivot.set_position(self._original_right_inner_pivot, unit='mm')
         self.left_inner_pivot_initial = self._original_left_inner_pivot.copy()
         self.right_inner_pivot_initial = self._original_right_inner_pivot.copy()
 
         # Reset outer attachments to original positions
-        self.left_outer_attachment = self._original_left_outer_attachment.copy()
-        self.right_outer_attachment = self._original_right_outer_attachment.copy()
+        self.left_outer_attachment.set_position(self._original_left_outer_attachment, unit='mm')
+        self.right_outer_attachment.set_position(self._original_right_outer_attachment, unit='mm')
         self.left_outer_attachment_initial = self._original_left_outer_attachment.copy()
         self.right_outer_attachment_initial = self._original_right_outer_attachment.copy()
 
@@ -380,10 +431,10 @@ class SteeringRack:
         self.current_angle = 0.0
 
         # Update tie rod endpoints
-        self.left_tie_rod.endpoint1.set_position(self.left_inner_pivot, unit='mm')
-        self.left_tie_rod.endpoint2.set_position(self.left_outer_attachment, unit='mm')
-        self.right_tie_rod.endpoint1.set_position(self.right_inner_pivot, unit='mm')
-        self.right_tie_rod.endpoint2.set_position(self.right_outer_attachment, unit='mm')
+        self.left_tie_rod.endpoint1.set_position(self._original_left_inner_pivot, unit='mm')
+        self.left_tie_rod.endpoint2.set_position(self._original_left_outer_attachment, unit='mm')
+        self.right_tie_rod.endpoint1.set_position(self._original_right_inner_pivot, unit='mm')
+        self.right_tie_rod.endpoint2.set_position(self._original_right_outer_attachment, unit='mm')
 
         # Update tie rod geometry
         self.left_tie_rod._update_local_frame()
@@ -474,28 +525,58 @@ class SteeringRack:
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("STEERING RACK TEST (with housing support)")
+    print("STEERING RACK TEST (with AttachmentPoint support)")
     print("=" * 70)
 
-    # Create a steering rack with housing attachment points
-    # Housing has 3 attachment points in a triangular pattern
-    housing_mounts = [
-        [1.40, 0.2, 0.35],   # Front right
-        [1.40, -0.2, 0.35],  # Front left
-        [1.50, 0.0, 0.35],   # Rear center
-    ]
+    # Test 1: Using AttachmentPoint objects (new API)
+    print("\n--- Test 1: Creating with AttachmentPoint objects ---")
+
+    housing_ap1 = AttachmentPoint("mount_0", [1.40, 0.2, 0.35], unit='m')
+    housing_ap2 = AttachmentPoint("mount_1", [1.40, -0.2, 0.35], unit='m')
+    housing_ap3 = AttachmentPoint("mount_2", [1.50, 0.0, 0.35], unit='m')
+
+    left_inner_ap = AttachmentPoint("left_inner", [1.45, 0.3, 0.35], unit='m')
+    right_inner_ap = AttachmentPoint("right_inner", [1.45, -0.3, 0.35], unit='m')
+    left_outer_ap = AttachmentPoint("left_outer", [1.55, 0.65, 0.35], unit='m')
+    right_outer_ap = AttachmentPoint("right_outer", [1.55, -0.65, 0.35], unit='m')
 
     rack = SteeringRack(
-        housing_attachments=housing_mounts,
-        left_inner_pivot=[1.45, 0.3, 0.35],      # Left tie rod pivot on rack
-        right_inner_pivot=[1.45, -0.3, 0.35],    # Right tie rod pivot on rack
-        left_outer_attachment=[1.55, 0.65, 0.35],  # Left knuckle attachment
-        right_outer_attachment=[1.55, -0.65, 0.35],  # Right knuckle attachment
+        housing_attachments=[housing_ap1, housing_ap2, housing_ap3],
+        left_inner_pivot=left_inner_ap,
+        right_inner_pivot=right_inner_ap,
+        left_outer_attachment=left_outer_ap,
+        right_outer_attachment=right_outer_ap,
         travel_per_rotation=0.001,  # 1mm per degree (in meters)
         max_displacement=0.1,  # 100mm max (in meters)
         name="front_rack",
         unit='m'
     )
+
+    print("✓ Created SteeringRack with AttachmentPoint objects")
+
+    # Test 2: Backward compatibility with raw positions
+    print("\n--- Test 2: Backward compatibility test (raw positions) ---")
+
+    rack_compat = SteeringRack(
+        housing_attachments=[
+            [1.40, 0.2, 0.35],   # Front right
+            [1.40, -0.2, 0.35],  # Front left
+            [1.50, 0.0, 0.35],   # Rear center
+        ],
+        left_inner_pivot=[1.45, 0.3, 0.35],
+        right_inner_pivot=[1.45, -0.3, 0.35],
+        left_outer_attachment=[1.55, 0.65, 0.35],
+        right_outer_attachment=[1.55, -0.65, 0.35],
+        travel_per_rotation=0.001,
+        max_displacement=0.1,
+        name="front_rack_compat",
+        unit='m'
+    )
+
+    print("✓ Created SteeringRack with raw positions (backward compatibility)")
+
+    # Continue with main tests using the AttachmentPoint-based rack
+    print("\n--- Continuing tests with AttachmentPoint-based rack ---")
 
     print(f"\n{rack}")
 
