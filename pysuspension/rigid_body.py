@@ -113,7 +113,6 @@ class RigidBody:
             attachment = AttachmentPoint(
                 name=name,
                 position=position,
-                is_relative=False,  # All rigid body attachments use absolute positioning
                 unit=unit,
                 parent_component=self
             )

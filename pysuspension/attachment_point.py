@@ -13,7 +13,7 @@ class AttachmentPoint:
     """
     Represents a suspension attachment point that can be connected to other attachment points.
 
-    All positions are stored internally in millimeters (mm).
+    All positions are stored internally in millimeters (mm) in absolute coordinates.
 
     Connection information is stored in a SuspensionJoint object that this attachment point
     references. The joint defines the type (ball joint, bushing, etc.) and connects all
@@ -21,15 +21,13 @@ class AttachmentPoint:
 
     Attributes:
         name: Identifier for the attachment point
-        position: 3D position vector [x, y, z]
-        is_relative: True if relative to parent component, False if absolute
+        position: 3D position vector [x, y, z] in absolute coordinates
         unit: Unit of input position
         parent_component: Optional reference to the component this attachment point belongs to
         joint: Optional reference to the SuspensionJoint connecting this point to others
     """
     name: str
     position: Union[np.ndarray, Tuple[float, float, float]]  # 3D position vector [x, y, z]
-    is_relative: bool = True  # True if relative to parent component, False if absolute
     unit: str = 'mm'  # Unit of input position
     parent_component: Optional[object] = None  # Reference to the owning component
     joint: Optional['SuspensionJoint'] = None  # Reference to the joint connecting this point
@@ -137,7 +135,6 @@ class AttachmentPoint:
         return AttachmentPoint(
             name=self.name,
             position=self._position_mm.copy(),
-            is_relative=self.is_relative,
             unit='mm',
             parent_component=self.parent_component,
             joint=None  # Don't copy joint connection
@@ -157,7 +154,6 @@ class AttachmentPoint:
         result = {
             'name': self.name,
             'position': self._position_mm.tolist(),  # Convert numpy array to list
-            'is_relative': self.is_relative,
             'unit': 'mm',  # Always serialize in mm for consistency
         }
         # Include joint name if connected to a joint
@@ -184,10 +180,13 @@ class AttachmentPoint:
             KeyError: If required fields are missing
             ValueError: If data is invalid
         """
+        # Read is_relative for backward compatibility with old data, but ignore it
+        # (all coordinates are now absolute)
+        _ = data.get('is_relative', None)
+
         return cls(
             name=data['name'],
             position=data['position'],
-            is_relative=data.get('is_relative', True),
             unit=data.get('unit', 'mm'),
             parent_component=parent_component,
             joint=None  # Joint will be reconnected by parent component if needed
@@ -200,19 +199,17 @@ if __name__ == "__main__":
     print("=" * 60)
 
     # Create an attachment point in meters
-    ap = AttachmentPoint("test_point", [0.1, 0.2, 0.3], is_relative=True, unit='m')
+    ap = AttachmentPoint("test_point", [0.1, 0.2, 0.3], unit='m')
     print(f"\nAttachment Point: {ap.name}")
     print(f"Position (mm): {ap.get_position()}")
     print(f"Position (m): {ap.get_position('m')}")
     print(f"Position (in): {ap.get_position('in')}")
-    print(f"Is relative: {ap.is_relative}")
 
-    # Test with absolute positioning in millimeters
-    ap_abs = AttachmentPoint("chassis_mount", [1500.0, 600.0, 400.0], is_relative=False, unit='mm')
-    print(f"\nAbsolute Attachment Point: {ap_abs.name}")
-    print(f"Position (mm): {ap_abs.get_position()}")
-    print(f"Position (m): {ap_abs.get_position('m')}")
-    print(f"Is relative: {ap_abs.is_relative}")
+    # Test with positioning in millimeters
+    ap_mm = AttachmentPoint("chassis_mount", [1500.0, 600.0, 400.0], unit='mm')
+    print(f"\nAttachment Point (mm): {ap_mm.name}")
+    print(f"Position (mm): {ap_mm.get_position()}")
+    print(f"Position (m): {ap_mm.get_position('m')}")
 
     # Test error handling
     print("\n--- Testing error handling ---")

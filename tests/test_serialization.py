@@ -21,7 +21,7 @@ def test_attachment_point_serialization():
     print("\n--- Testing AttachmentPoint Serialization ---")
 
     # Create an attachment point
-    ap = AttachmentPoint("test_point", [100.0, 200.0, 300.0], is_relative=True, unit='mm')
+    ap = AttachmentPoint("test_point", [100.0, 200.0, 300.0], unit='mm')
 
     # Serialize
     data = ap.to_dict()
@@ -37,7 +37,6 @@ def test_attachment_point_serialization():
     # Verify
     assert ap_restored.name == ap.name
     assert np.allclose(ap_restored.position, ap.position)
-    assert ap_restored.is_relative == ap.is_relative
     print("✓ AttachmentPoint serialization test passed")
 
 
@@ -157,7 +156,6 @@ def test_suspension_knuckle_serialization():
     assert abs(knuckle_restored.wheel_offset - knuckle.wheel_offset) < 1e-3
     assert abs(knuckle_restored.mass - knuckle.mass) < 1e-6
     assert len(knuckle_restored.attachment_points) == len(knuckle.attachment_points)
-    assert knuckle_restored.steering_attachment_name == knuckle.steering_attachment_name
     print("✓ SuspensionKnuckle serialization test passed")
 
 

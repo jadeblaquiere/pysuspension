@@ -39,7 +39,6 @@ class SuspensionLink:
             self.endpoint1 = AttachmentPoint(
                 name=f"{name}_endpoint1",
                 position=endpoint1_array,
-                is_relative=False,
                 unit=unit,
                 parent_component=self
             )
@@ -53,7 +52,6 @@ class SuspensionLink:
             self.endpoint2 = AttachmentPoint(
                 name=f"{name}_endpoint2",
                 position=endpoint2_array,
-                is_relative=False,
                 unit=unit,
                 parent_component=self
             )

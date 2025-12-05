@@ -67,7 +67,6 @@ class ChassisCorner:
             attachment = AttachmentPoint(
                 name=name,
                 position=position,
-                is_relative=False,  # Chassis attachment points are in absolute coordinates
                 unit=unit,
                 parent_component=self
             )
