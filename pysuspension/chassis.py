@@ -150,22 +150,22 @@ class Chassis(RigidBody):
             raise ValueError(f"Axle '{name}' not found")
         return self.axles[name]
 
-    def add_component(self, name: str, component: RigidBody) -> None:
+    def add_component(self, component: RigidBody) -> None:
         """
         Register a suspension component with this chassis.
 
         This enables comprehensive serialization of the entire suspension system.
+        The component's name attribute is used as the identifier.
 
         Args:
-            name: Unique identifier for the component
             component: Suspension component (ControlArm, SuspensionKnuckle, etc.)
 
         Raises:
-            ValueError: If component name already exists
+            ValueError: If a component with this name already exists
         """
-        if name in self.components:
-            raise ValueError(f"Component '{name}' already exists")
-        self.components[name] = component
+        if component.name in self.components:
+            raise ValueError(f"Component '{component.name}' already exists")
+        self.components[component.name] = component
 
     def add_joint(self, joint: 'SuspensionJoint') -> None:
         """
@@ -510,8 +510,8 @@ class Chassis(RigidBody):
             component_class = component_registry[comp_type]
             component = component_class.from_dict(comp_dict)
 
-            # Register component with chassis
-            chassis.add_component(comp_name, component)
+            # Register component with chassis (uses component.name automatically)
+            chassis.add_component(component)
 
         # Phase 3: Build lookup table for attachment points
         point_lookup = chassis._build_attachment_point_lookup()
