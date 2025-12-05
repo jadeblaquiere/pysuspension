@@ -92,7 +92,6 @@ class ChassisAxle:
             attachment = AttachmentPoint(
                 name=name,
                 position=position,
-                is_relative=False,  # Axle attachment points are in absolute coordinates
                 unit=unit,
                 parent_component=self
             )
