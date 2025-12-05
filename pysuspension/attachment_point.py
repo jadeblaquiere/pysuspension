@@ -180,10 +180,6 @@ class AttachmentPoint:
             KeyError: If required fields are missing
             ValueError: If data is invalid
         """
-        # Read is_relative for backward compatibility with old data, but ignore it
-        # (all coordinates are now absolute)
-        _ = data.get('is_relative', None)
-
         return cls(
             name=data['name'],
             position=data['position'],
