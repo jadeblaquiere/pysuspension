@@ -9,6 +9,11 @@ All internal calculations use:
 - kilograms (kg) for mass
 - kg/mm for spring rates
 
+The axis conventions follow ISO-8855:
+- x longitudinal (+ front)
+- y lateral (+ left)
+- z vertical (+ up)
+
 Basic usage:
     >>> from pysuspension import Chassis, ControlArm, SuspensionKnuckle
     >>> chassis = Chassis(name="my_chassis", mass=1000.0, mass_unit='kg')

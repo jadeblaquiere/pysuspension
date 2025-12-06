@@ -84,7 +84,7 @@ class SteeringRack:
         # Create housing as a RigidBody (rigid body connected to chassis)
         self.housing = RigidBody(name=f"{name}_housing", mass=0.0, mass_unit='kg')
         for point in housing_points:
-            self.housing.add_attachment_point(point.name, point.position, unit='mm')
+            self.housing.add_attachment_point(point)
 
         # Convert pivot inputs to AttachmentPoint objects if needed
         self.left_inner_pivot = self._ensure_attachment_point(
