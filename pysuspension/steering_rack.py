@@ -86,7 +86,7 @@ class SteeringRack:
         # Create housing as a RigidBody (rigid body connected to chassis)
         self.housing = RigidBody(name=f"{name}_housing", mass=0.0, mass_unit='kg')
         for point in housing_points:
-            self.housing.add_attachment_point(point.name, point.position, unit='mm')
+            self.housing.add_attachment_point(point)
 
         # Convert pivot/attachment inputs to AttachmentPoint objects if needed
         self.left_inner_pivot = self._ensure_attachment_point(
@@ -139,15 +139,15 @@ class SteeringRack:
         # Create tie rod links (left and right)
         # SuspensionLink expects positions, so we pass the position from AttachmentPoint
         self.left_tie_rod = SuspensionLink(
-            endpoint1=self.left_inner_pivot.position,
-            endpoint2=self.left_outer_attachment.position,
+            endpoint1=self.left_inner_pivot,
+            endpoint2=self.left_outer_attachment,
             name=f"{name}_left_tie_rod",
             unit='mm'
         )
 
         self.right_tie_rod = SuspensionLink(
-            endpoint1=self.right_inner_pivot.position,
-            endpoint2=self.right_outer_attachment.position,
+            endpoint1=self.right_inner_pivot,
+            endpoint2=self.right_outer_attachment,
             name=f"{name}_right_tie_rod",
             unit='mm'
         )

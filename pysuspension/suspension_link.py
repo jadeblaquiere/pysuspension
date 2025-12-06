@@ -32,6 +32,7 @@ class SuspensionLink:
         # Create AttachmentPoint objects if not provided
         if isinstance(endpoint1, AttachmentPoint):
             self.endpoint1 = endpoint1
+            endpoint1.parent_component = self
         else:
             endpoint1_array = np.array(endpoint1, dtype=float)
             if endpoint1_array.shape != (3,):
@@ -45,6 +46,7 @@ class SuspensionLink:
 
         if isinstance(endpoint2, AttachmentPoint):
             self.endpoint2 = endpoint2
+            endpoint2.parent_component=self
         else:
             endpoint2_array = np.array(endpoint2, dtype=float)
             if endpoint2_array.shape != (3,):
