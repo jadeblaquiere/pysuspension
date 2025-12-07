@@ -454,6 +454,10 @@ class Chassis(RigidBody):
                 for ap in component.housing.attachment_points:
                     if ap is point:
                         return component.housing.name
+            if hasattr(component, 'left_inner_pivot') and component.left_inner_pivot is point:
+                return comp_name
+            if hasattr(component, 'right_inner_pivot') and component.right_inner_pivot is point:
+                return comp_name
 
         # Check chassis corners
         for corner_name, corner in self.corners.items():
