@@ -85,14 +85,17 @@ class SteeringRack:
         self.housing = RigidBody(name=f"{name}_housing", mass=0.0, mass_unit='kg')
         for point in housing_points:
             self.housing.add_attachment_point(point)
+            point.parent_component = self.housing
 
         # Convert pivot inputs to AttachmentPoint objects if needed
         self.left_inner_pivot = self._ensure_attachment_point(
             left_inner_pivot, f"{name}_left_inner", unit
         )
+        self.left_inner_pivot.parent_component = self
         self.right_inner_pivot = self._ensure_attachment_point(
             right_inner_pivot, f"{name}_right_inner", unit
         )
+        self.right_inner_pivot.parent_component = self
 
         # Travel parameters (in mm)
         self.travel_per_rotation = to_mm(travel_per_rotation, unit)
