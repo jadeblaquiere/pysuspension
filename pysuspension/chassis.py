@@ -449,6 +449,11 @@ class Chassis(RigidBody):
                 return comp_name
             if hasattr(component, 'endpoint2') and component.endpoint2 is point:
                 return comp_name
+            # Check SteeringRack housing attachment points
+            if hasattr(component, 'housing'):
+                for ap in component.housing.attachment_points:
+                    if ap is point:
+                        return component.housing.name
 
         # Check chassis corners
         for corner_name, corner in self.corners.items():
