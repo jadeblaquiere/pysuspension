@@ -168,16 +168,44 @@ class SuspensionKnuckle(RigidBody):
         """
         Calculate the position of the tire contact patch (ground contact point).
 
+        The contact patch is located at a distance of rolling_radius from the tire center,
+        along a line perpendicular to the tire axis and constrained to the YZ plane
+        (maintaining the same X coordinate as the tire center). This accounts for
+        camber angle when determining the contact patch location.
+
         Args:
             unit: Unit for output (default: 'mm')
 
         Returns:
             3D position of contact patch in specified unit
         """
-        # Contact patch is at z=0, directly below the tire center considering camber
-        # For small camber angles, this is approximately at ground level
-        contact = self.tire_center.copy()
-        contact[2] = 0.0
+        # Get the tire axis in global coordinates
+        tire_axis = self.get_tire_axis()  # [a_x, a_y, a_z]
+
+        # Find direction perpendicular to tire axis, constrained to YZ plane (X = 0)
+        # This direction is [0, -a_z, a_y], which is perpendicular to tire axis
+        # because: [0, -a_z, a_y] · [a_x, a_y, a_z] = 0*a_x + (-a_z)*a_y + a_y*a_z = 0
+        direction = np.array([0.0, -tire_axis[2], tire_axis[1]])
+
+        # Normalize the direction vector
+        direction_magnitude = np.linalg.norm(direction)
+        if direction_magnitude < 1e-10:
+            # Tire axis is purely in X direction (shouldn't happen normally)
+            # Fall back to straight down
+            direction = np.array([0.0, 0.0, -1.0])
+        else:
+            direction = direction / direction_magnitude
+
+        # Ensure direction points downward (negative Z component)
+        # If it points upward, flip it
+        if direction[2] > 0:
+            direction = -direction
+
+        # Calculate contact patch position
+        # Start at tire center, move rolling_radius distance in the perpendicular direction
+        rolling_radius_mm = self.tire_center[2]  # Stored as Z coordinate of tire center
+        contact = self.tire_center + rolling_radius_mm * direction
+
         return from_mm(contact, unit)
     
     def get_tire_axis(self) -> np.ndarray:
