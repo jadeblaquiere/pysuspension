@@ -2,7 +2,8 @@
 Example: Instant Center Analysis for Suspension Design
 
 This example demonstrates how to calculate roll and pitch instant centers
-for a suspension corner using the pysuspension library.
+for a suspension corner using the pysuspension library with constraint-based
+kinematics.
 
 Instant centers are important geometric properties that describe the
 instantaneous center of rotation for suspension motion. They affect:
@@ -11,11 +12,12 @@ instantaneous center of rotation for suspension motion. They affect:
 - Anti-squat and anti-dive behavior
 
 The analysis works by:
-1. Creating a suspension knuckle with tire geometry
-2. Simulating small vertical (heave) displacements
-3. Capturing the tire contact patch trajectory
-4. Fitting circles to the projected trajectories
-5. Extracting instant center positions from circle centers
+1. Setting up suspension linkage (control arms, links, wheel center)
+2. Using constraint-based solver to simulate heave motion
+3. Capturing the wheel center positions through the suspension travel
+4. Projecting to ground level to get tire contact patches
+5. Fitting circles to the projected trajectories
+6. Extracting instant center positions from circle centers
 """
 
 import sys
@@ -23,47 +25,115 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import numpy as np
-from pysuspension import CornerSolver, SuspensionKnuckle
+from pysuspension import CornerSolver, SuspensionLink, AttachmentPoint
+
+
+def create_double_wishbone_suspension(name="front_corner", track_width=1500):
+    """
+    Create a double wishbone suspension for analysis.
+
+    Args:
+        name: Name for the corner solver
+        track_width: Lateral distance from centerline to wheel center (mm)
+
+    Returns:
+        Configured CornerSolver ready for analysis
+    """
+    solver = CornerSolver(name)
+
+    # Upper control arm links (shorter, at top)
+    upper_front_link = SuspensionLink(
+        endpoint1=[1400, 0, 600],           # Chassis mount (front)
+        endpoint2=[1400, track_width-100, 580],  # Ball joint
+        name="upper_front",
+        unit='mm'
+    )
+    upper_rear_link = SuspensionLink(
+        endpoint1=[1200, 0, 600],           # Chassis mount (rear)
+        endpoint2=[1400, track_width-100, 580],  # Ball joint (shared)
+        name="upper_rear",
+        unit='mm'
+    )
+
+    # Lower control arm links (longer, at bottom)
+    lower_front_link = SuspensionLink(
+        endpoint1=[1500, 0, 300],           # Chassis mount (front)
+        endpoint2=[1400, track_width-50, 200],   # Ball joint
+        name="lower_front",
+        unit='mm'
+    )
+    lower_rear_link = SuspensionLink(
+        endpoint1=[1100, 0, 300],           # Chassis mount (rear)
+        endpoint2=[1400, track_width-50, 200],   # Ball joint (shared)
+        name="lower_rear",
+        unit='mm'
+    )
+
+    # Wheel center (on knuckle, between ball joints)
+    wheel_center = AttachmentPoint("wheel_center", [1400, track_width, 390], unit='mm')
+
+    # Add links to solver
+    solver.add_link(upper_front_link, end1_is_chassis=True, end2_is_chassis=False)
+    solver.add_link(upper_rear_link, end1_is_chassis=True, end2_is_chassis=False)
+    solver.add_link(lower_front_link, end1_is_chassis=True, end2_is_chassis=False)
+    solver.add_link(lower_rear_link, end1_is_chassis=True, end2_is_chassis=False)
+
+    # Connect wheel center to ball joints (simulates knuckle)
+    upper_ball_joint = upper_front_link.endpoint2
+    lower_ball_joint = lower_front_link.endpoint2
+
+    upper_to_wheel = SuspensionLink(
+        upper_ball_joint,
+        wheel_center,
+        name="upper_knuckle_link",
+        unit='mm'
+    )
+    lower_to_wheel = SuspensionLink(
+        lower_ball_joint,
+        wheel_center,
+        name="lower_knuckle_link",
+        unit='mm'
+    )
+
+    solver.add_link(upper_to_wheel, end1_is_chassis=False, end2_is_chassis=False)
+    solver.add_link(lower_to_wheel, end1_is_chassis=False, end2_is_chassis=False)
+
+    # Set wheel center for heave analysis
+    solver.set_wheel_center(wheel_center)
+
+    # Solve initial configuration
+    solver.save_initial_state()
+    result = solver.solve()
+
+    if not result.success:
+        print(f"Warning: Initial solve failed: {result.message}")
+
+    return solver
 
 
 def example_basic_instant_center():
     """
-    Basic example: Calculate instant centers for a front suspension corner.
+    Basic example: Calculate instant centers for a double wishbone suspension.
     """
     print("=" * 70)
     print("EXAMPLE 1: Basic Instant Center Analysis")
     print("=" * 70)
 
-    # Create a suspension knuckle for a front-left corner
-    # Typical dimensions for a passenger car
-    knuckle = SuspensionKnuckle(
-        tire_center_x=1.5,      # 1.5m forward from origin (m)
-        tire_center_y=0.75,     # 0.75m lateral (track width) (m)
-        rolling_radius=0.35,    # 350mm tire radius (m)
-        toe_angle=0.0,          # 0° toe (degrees)
-        camber_angle=-1.0,      # -1° negative camber (degrees)
-        unit='m',               # Input units
-        name='front_left'
-    )
+    # Create a double wishbone suspension
+    solver = create_double_wishbone_suspension("front_left")
 
-    print(f"\nKnuckle Configuration:")
-    print(f"  Tire center: {knuckle.tire_center} mm")
-    print(f"  Rolling radius: {knuckle.tire_center[2]:.1f} mm")
-    print(f"  Camber: {np.degrees(knuckle.camber_angle):.1f}°")
-    print(f"  Toe: {np.degrees(knuckle.toe_angle):.1f}°")
-
-    # Create a corner solver
-    solver = CornerSolver(name="front_left_corner")
+    print(f"\nSuspension Configuration:")
+    print(f"  Type: Double wishbone")
+    print(f"  Wheel center: {solver.wheel_center.position} mm")
+    print(f"  Number of links: {len(solver.links)}")
+    print(f"  Number of constraints: {len(solver.constraints)}")
 
     # Calculate instant centers using default motion range (±10mm)
     print(f"\nCalculating instant centers...")
     print(f"  Motion range: ±10mm vertical travel")
     print(f"  Sample points: 5 positions [0, +5, +10, -5, -10] mm")
 
-    result = solver.calculate_instant_centers(
-        knuckle=knuckle,
-        unit='mm'  # Use millimeters for z_offsets and output
-    )
+    result = solver.calculate_instant_centers(unit='mm')
 
     # Display results
     print(f"\n{'='*70}")
@@ -74,20 +144,23 @@ def example_basic_instant_center():
     print(f"  Position: X={result['roll_center'][0]:.1f} mm, "
           f"Y={result['roll_center'][1]:.1f} mm, "
           f"Z={result['roll_center'][2]:.1f} mm")
-    print(f"  Radius: {result['roll_radius']:.1f} mm")
+    print(f"  Arc radius: {result['roll_radius']:.2f} mm")
     print(f"  Fit quality: {result['roll_fit_quality']:.6f}")
-    print(f"  RMS residual: {result['roll_residuals']:.6f} mm")
 
     print(f"\nPitch Instant Center:")
     print(f"  Position: X={result['pitch_center'][0]:.1f} mm, "
           f"Y={result['pitch_center'][1]:.1f} mm, "
           f"Z={result['pitch_center'][2]:.1f} mm")
-    print(f"  Radius: {result['pitch_radius']:.1f} mm")
+    print(f"  Arc radius: {result['pitch_radius']:.2f} mm")
     print(f"  Fit quality: {result['pitch_fit_quality']:.6f}")
-    print(f"  RMS residual: {result['pitch_residuals']:.6f} mm")
+
+    print(f"\nSolver Quality:")
+    print(f"  Max solve error: {max(result['solve_errors']):.6f} mm")
+    print(f"  All solves converged: {all(e < 0.01 for e in result['solve_errors'])}")
 
     print(f"\nInterpretation:")
     print(f"  - Roll center height: {result['roll_center'][2]:.1f} mm above ground")
+    print(f"  - Small arc radius indicates nearly circular motion")
     print(f"  - Lower roll center = more body roll, better grip")
     print(f"  - Higher roll center = less body roll, more responsive")
 
@@ -104,24 +177,14 @@ def example_custom_motion_range():
     print("EXAMPLE 2: Custom Motion Range")
     print("=" * 70)
 
-    # Create knuckle for rear suspension
-    knuckle = SuspensionKnuckle(
-        tire_center_x=1200,     # mm
-        tire_center_y=800,      # mm (wider rear track)
-        rolling_radius=360,     # mm (slightly larger rear tire)
-        camber_angle=-2.0,      # degrees (more negative camber)
-        unit='mm'
-    )
+    # Create suspension
+    solver = create_double_wishbone_suspension("rear_corner", track_width=1600)
 
     print(f"\nRear Suspension Configuration:")
-    print(f"  Track width: {knuckle.tire_center[1] * 2:.0f} mm")
-    print(f"  Tire diameter: {knuckle.tire_center[2] * 2:.0f} mm")
+    print(f"  Wider track width: {solver.wheel_center.position[1] * 2:.0f} mm total")
 
-    solver = CornerSolver("rear_corner")
-
-    # Use larger motion range for rear suspension analysis
-    # Sample more points for better accuracy
-    z_offsets = [-30, -20, -10, 0, 10, 20, 30]  # ±30mm range
+    # Use larger motion range
+    z_offsets = [-30, -20, -10, 0, 10, 20, 30]
 
     print(f"\nCustom Analysis Parameters:")
     print(f"  Motion range: ±30mm")
@@ -129,7 +192,6 @@ def example_custom_motion_range():
     print(f"  Z offsets: {z_offsets} mm")
 
     result = solver.calculate_instant_centers(
-        knuckle=knuckle,
         z_offsets=z_offsets,
         unit='mm'
     )
@@ -137,63 +199,43 @@ def example_custom_motion_range():
     print(f"\nResults:")
     print(f"  Roll center: Z = {result['roll_center'][2]:.1f} mm")
     print(f"  Pitch center: Z = {result['pitch_center'][2]:.1f} mm")
-    print(f"  Roll radius: {result['roll_radius']:.1f} mm")
-    print(f"  Pitch radius: {result['pitch_radius']:.1f} mm")
+    print(f"  Roll arc radius: {result['roll_radius']:.2f} mm")
+    print(f"  Pitch arc radius: {result['pitch_radius']:.2f} mm")
 
     print(f"\n✓ Custom motion range analysis complete!\n")
 
     return result
 
 
-def example_compare_configurations():
+def example_compare_track_widths():
     """
-    Compare instant centers for different suspension configurations.
+    Compare instant centers for different track widths.
     """
     print("=" * 70)
-    print("EXAMPLE 3: Comparing Different Configurations")
+    print("EXAMPLE 3: Comparing Different Track Widths")
     print("=" * 70)
 
-    configurations = [
-        {
-            'name': 'Narrow Track',
-            'track_width': 1400,  # mm
-            'camber': 0.0
-        },
-        {
-            'name': 'Wide Track',
-            'track_width': 1600,  # mm
-            'camber': 0.0
-        },
-        {
-            'name': 'Negative Camber',
-            'track_width': 1500,  # mm
-            'camber': -2.0
-        }
+    track_widths = [
+        ("Narrow Track", 1400),
+        ("Standard Track", 1500),
+        ("Wide Track", 1600)
     ]
 
     results = []
-    solver = CornerSolver("comparison_solver")
 
     print("\nAnalyzing configurations...\n")
 
-    for config in configurations:
-        print(f"Configuration: {config['name']}")
-        print(f"  Track width: {config['track_width']} mm")
-        print(f"  Camber: {config['camber']}°")
+    for name, track_width in track_widths:
+        print(f"Configuration: {name}")
+        print(f"  Track width: {track_width * 2} mm total")
 
-        knuckle = SuspensionKnuckle(
-            tire_center_x=1500,
-            tire_center_y=config['track_width'] / 2,
-            rolling_radius=350,
-            camber_angle=config['camber'],
-            unit='mm'
-        )
-
-        result = solver.calculate_instant_centers(knuckle, unit='mm')
+        solver = create_double_wishbone_suspension("comparison", track_width)
+        result = solver.calculate_instant_centers(unit='mm')
         results.append(result)
 
-        print(f"  → Roll center height: {result['roll_center'][2]:.1f} mm")
-        print(f"  → Roll radius: {result['roll_radius']:.1f} mm")
+        print(f"  → Roll center: Y={result['roll_center'][1]:.1f} mm, "
+              f"Z={result['roll_center'][2]:.1f} mm")
+        print(f"  → Arc radius: {result['roll_radius']:.2f} mm")
         print()
 
     # Summary comparison
@@ -201,85 +243,31 @@ def example_compare_configurations():
     print("COMPARISON SUMMARY")
     print(f"{'='*70}\n")
 
-    print(f"{'Configuration':<20} {'Roll Center Z (mm)':<20} {'Roll Radius (mm)':<20}")
+    print(f"{'Configuration':<20} {'Roll Center Y (mm)':<20} {'Arc Radius (mm)':<20}")
     print("-" * 60)
 
-    for config, result in zip(configurations, results):
-        print(f"{config['name']:<20} {result['roll_center'][2]:>18.1f}  "
-              f"{result['roll_radius']:>18.1f}")
+    for (name, _), result in zip(track_widths, results):
+        print(f"{name:<20} {result['roll_center'][1]:>18.1f}  "
+              f"{result['roll_radius']:>18.2f}")
 
-    print(f"\n✓ Configuration comparison complete!\n")
+    print(f"\nObservation: Wider track generally affects roll center lateral position")
+    print(f"✓ Track width comparison complete!\n")
 
     return results
 
 
-def example_using_meters():
-    """
-    Example using metric units (meters) throughout.
-    """
-    print("=" * 70)
-    print("EXAMPLE 4: Working in Meters")
-    print("=" * 70)
-
-    # Define everything in meters
-    knuckle = SuspensionKnuckle(
-        tire_center_x=1.5,
-        tire_center_y=0.75,
-        rolling_radius=0.35,
-        unit='m'
-    )
-
-    solver = CornerSolver("metric_solver")
-
-    # Use meter-based offsets
-    z_offsets_m = [0, 0.005, 0.010, -0.005, -0.010]  # ±10mm in meters
-
-    print(f"\nWorking in meters:")
-    print(f"  Tire center: [{knuckle.tire_center[0]/1000:.3f}, "
-          f"{knuckle.tire_center[1]/1000:.3f}, "
-          f"{knuckle.tire_center[2]/1000:.3f}] m")
-    print(f"  Z offsets: {z_offsets_m} m")
-
-    result = solver.calculate_instant_centers(
-        knuckle=knuckle,
-        z_offsets=z_offsets_m,
-        unit='m'  # Output in meters
-    )
-
-    print(f"\nResults (in meters):")
-    print(f"  Roll center: [{result['roll_center'][0]:.4f}, "
-          f"{result['roll_center'][1]:.4f}, "
-          f"{result['roll_center'][2]:.4f}] m")
-    print(f"  Roll radius: {result['roll_radius']:.4f} m")
-    print(f"  Pitch center: [{result['pitch_center'][0]:.4f}, "
-          f"{result['pitch_center'][1]:.4f}, "
-          f"{result['pitch_center'][2]:.4f}] m")
-    print(f"  Pitch radius: {result['pitch_radius']:.4f} m")
-
-    print(f"\n✓ Metric analysis complete!\n")
-
-    return result
-
-
-def example_fine_grained_analysis():
+def example_high_resolution_analysis():
     """
     High-resolution analysis with many sample points.
     """
     print("=" * 70)
-    print("EXAMPLE 5: High-Resolution Analysis")
+    print("EXAMPLE 4: High-Resolution Analysis")
     print("=" * 70)
 
-    knuckle = SuspensionKnuckle(
-        tire_center_x=1500,
-        tire_center_y=750,
-        rolling_radius=350,
-        unit='mm'
-    )
-
-    solver = CornerSolver("high_res_solver")
+    solver = create_double_wishbone_suspension("high_res")
 
     # Use many sample points for high accuracy
-    z_offsets = np.linspace(-20, 20, 21).tolist()  # 21 points over ±20mm
+    z_offsets = np.linspace(-20, 20, 21).tolist()
 
     print(f"\nHigh-resolution configuration:")
     print(f"  Sample points: {len(z_offsets)}")
@@ -287,7 +275,6 @@ def example_fine_grained_analysis():
     print(f"  Point spacing: {z_offsets[1] - z_offsets[0]:.1f} mm")
 
     result = solver.calculate_instant_centers(
-        knuckle=knuckle,
         z_offsets=z_offsets,
         unit='mm'
     )
@@ -301,15 +288,59 @@ def example_fine_grained_analysis():
           f"{result['pitch_center'][2]:.2f}] mm")
 
     print(f"\nFit Quality Metrics:")
-    print(f"  Roll fit quality: {result['roll_fit_quality']:.10f}")
-    print(f"  Pitch fit quality: {result['pitch_fit_quality']:.10f}")
+    print(f"  Roll fit quality: {result['roll_fit_quality']:.8f}")
+    print(f"  Pitch fit quality: {result['pitch_fit_quality']:.8f}")
     print(f"  (Lower values indicate better fits)")
 
+    print(f"\nSolver Performance:")
+    print(f"  Average solve error: {np.mean(result['solve_errors']):.6f} mm")
+    print(f"  Max solve error: {max(result['solve_errors']):.6f} mm")
+    print(f"  Min solve error: {min(result['solve_errors']):.6f} mm")
+
     print(f"\n  With {len(z_offsets)} points, the circle fit is very accurate!")
-    print(f"  Roll residual: {result['roll_residuals']:.6f} mm")
-    print(f"  Pitch residual: {result['pitch_residuals']:.6f} mm")
 
     print(f"\n✓ High-resolution analysis complete!\n")
+
+    return result
+
+
+def example_different_units():
+    """
+    Example using metric units (meters).
+    """
+    print("=" * 70)
+    print("EXAMPLE 5: Working with Different Units")
+    print("=" * 70)
+
+    solver = create_double_wishbone_suspension("metric_test")
+
+    # Use meter-based offsets
+    z_offsets_m = [0, 0.005, 0.010, -0.005, -0.010]
+
+    print(f"\nUsing meters for input and output:")
+    print(f"  Z offsets: {z_offsets_m} m")
+
+    result = solver.calculate_instant_centers(
+        z_offsets=z_offsets_m,
+        unit='m'  # Output in meters
+    )
+
+    print(f"\nResults (in meters):")
+    print(f"  Roll center: [{result['roll_center'][0]:.4f}, "
+          f"{result['roll_center'][1]:.4f}, "
+          f"{result['roll_center'][2]:.4f}] m")
+    print(f"  Arc radius: {result['roll_radius']:.6f} m")
+    print(f"  Pitch center: [{result['pitch_center'][0]:.4f}, "
+          f"{result['pitch_center'][1]:.4f}, "
+          f"{result['pitch_center'][2]:.4f}] m")
+    print(f"  Arc radius: {result['pitch_radius']:.6f} m")
+
+    # Convert to mm for comparison
+    print(f"\nSame results (converted to mm):")
+    print(f"  Roll center Z: {result['roll_center'][2] * 1000:.1f} mm")
+    print(f"  Arc radius: {result['roll_radius'] * 1000:.2f} mm")
+
+    print(f"\n✓ Units test complete!\n")
 
     return result
 
@@ -320,15 +351,15 @@ def run_all_examples():
     """
     print("\n" + "=" * 70)
     print("INSTANT CENTER ANALYSIS EXAMPLES")
-    print("Demonstrating suspension geometry analysis with pysuspension")
+    print("Demonstrating suspension kinematics analysis with pysuspension")
     print("=" * 70 + "\n")
 
     # Run examples
     example_basic_instant_center()
     example_custom_motion_range()
-    example_compare_configurations()
-    example_using_meters()
-    example_fine_grained_analysis()
+    example_compare_track_widths()
+    example_high_resolution_analysis()
+    example_different_units()
 
     # Final summary
     print("=" * 70)
@@ -338,13 +369,14 @@ def run_all_examples():
     print("  • Instant centers describe the center of rotation for suspension motion")
     print("  • Roll center affects body roll and lateral load transfer")
     print("  • Pitch center affects brake dive and acceleration squat")
+    print("  • The analysis uses constraint-based kinematics for accurate results")
+    print("  • Smaller arc radii indicate the suspension traces a nearly circular path")
     print("  • Lower fit quality values indicate more accurate circle fits")
-    print("  • The method works with any unit system (mm, m, inches, etc.)")
     print("\nNext Steps:")
-    print("  • Integrate with full suspension linkage models")
-    print("  • Analyze instant center migration through full travel")
+    print("  • Analyze instant center migration through full suspension travel")
     print("  • Compare front and rear suspension instant centers")
     print("  • Optimize instant center locations for specific handling goals")
+    print("  • Study the effect of suspension geometry changes on instant centers")
     print("=" * 70 + "\n")
 
 

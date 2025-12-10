@@ -399,32 +399,39 @@ class CornerSolver(SuspensionSolver):
             raise ValueError(f"Unknown angle unit '{unit}'. Use 'deg' or 'rad'")
 
     def calculate_instant_centers(self,
-                                  knuckle: 'SuspensionKnuckle',
                                   z_offsets: Optional[List[float]] = None,
-                                  unit: str = 'mm') -> Dict[str, any]:
+                                  unit: str = 'mm',
+                                  initial_guess: Optional[np.ndarray] = None) -> Dict[str, any]:
         """
         Calculate roll and pitch instant centers for the suspension corner.
 
-        This method simulates vertical motion (heave) of the suspension knuckle
-        and analyzes the resulting arc traced by the tire contact patch. The
-        instant centers are found by fitting circles to the projected contact
-        point trajectories.
+        This method uses constraint-based kinematics to simulate vertical motion
+        (heave) of the suspension through the control arms and linkage. It solves
+        for the wheel center position at each displacement and traces the tire
+        contact patch trajectory. The instant centers are found by fitting circles
+        to the projected contact point trajectories.
 
         The method:
-        1. Saves the initial knuckle state
-        2. Moves the knuckle through specified z-axis displacements
-        3. Captures the tire contact patch position at each displacement
-        4. Returns knuckle to original position
-        5. Projects contact points onto YZ plane (for roll center)
-        6. Projects contact points onto XZ plane (for pitch center)
-        7. Fits circles to the projected points
-        8. Returns the circle centers as instant centers
+        1. Verifies the suspension is properly configured with wheel_center set
+        2. Saves the initial suspension state
+        3. For each z-offset, solves suspension kinematics using constraints
+        4. Captures the wheel center position and projects to ground (contact patch)
+        5. Restores initial suspension state
+        6. Projects contact points onto YZ plane (for roll center)
+        7. Projects contact points onto XZ plane (for pitch center)
+        8. Fits circles to the projected points
+        9. Returns the circle centers as instant centers
+
+        Prerequisites:
+            - Suspension linkage must be configured (control arms, links added)
+            - Wheel center must be set via set_wheel_center()
+            - Chassis mount points must be properly constrained
 
         Args:
-            knuckle: SuspensionKnuckle object to analyze
-            z_offsets: List of z-axis displacements to test in specified unit
+            z_offsets: List of z-axis displacements from current position (heave)
                       Default: [0, 5, 10, -5, -10] mm
             unit: Unit for z_offsets and output positions (default: 'mm')
+            initial_guess: Initial guess for solver (uses current state if None)
 
         Returns:
             Dictionary containing:
@@ -433,29 +440,31 @@ class CornerSolver(SuspensionSolver):
                 - 'roll_radius': float - Fitted circle radius for roll motion
                 - 'pitch_radius': float - Fitted circle radius for pitch motion
                 - 'contact_points': Nx3 array - Captured tire contact positions
+                - 'wheel_centers': Nx3 array - Wheel center positions at each offset
                 - 'roll_fit_quality': float - Normalized RMS residual for roll fit
                 - 'pitch_fit_quality': float - Normalized RMS residual for pitch fit
                 - 'roll_residuals': float - Absolute RMS residual for roll fit
                 - 'pitch_residuals': float - Absolute RMS residual for pitch fit
+                - 'solve_errors': List[float] - RMS error from solver at each offset
 
         Raises:
-            ValueError: If insufficient z_offsets provided or knuckle is invalid
+            ValueError: If wheel_center not set or insufficient z_offsets provided
 
         Example:
-            >>> from pysuspension import CornerSolver, SuspensionKnuckle
-            >>> knuckle = SuspensionKnuckle(tire_center_x=1.5, tire_center_y=0.75,
-            ...                            rolling_radius=0.35, unit='m')
-            >>> solver = CornerSolver()
-            >>> result = solver.calculate_instant_centers(knuckle)
+            >>> from pysuspension import CornerSolver, SuspensionLink, AttachmentPoint
+            >>> # Set up suspension geometry
+            >>> solver = CornerSolver("front_left")
+            >>> # ... add control arms, links, etc ...
+            >>> wheel_center = AttachmentPoint("wheel_center", [1400, 750, 390], unit='mm')
+            >>> solver.set_wheel_center(wheel_center)
+            >>> # Calculate instant centers
+            >>> result = solver.calculate_instant_centers()
             >>> print(f"Roll center: {result['roll_center']} mm")
             >>> print(f"Pitch center: {result['pitch_center']} mm")
         """
-        # Import here to avoid circular dependency
-        from .suspension_knuckle import SuspensionKnuckle
-
-        # Validate inputs
-        if not isinstance(knuckle, SuspensionKnuckle):
-            raise ValueError("knuckle must be a SuspensionKnuckle object")
+        # Validate prerequisites
+        if self.wheel_center is None:
+            raise ValueError("Wheel center not set. Call set_wheel_center() before calculating instant centers.")
 
         if z_offsets is None:
             z_offsets = [0, 5, 10, -5, -10]  # Default in mm
@@ -466,30 +475,45 @@ class CornerSolver(SuspensionSolver):
         # Convert z_offsets to mm for internal calculations
         z_offsets_mm = [to_mm(z, unit) for z in z_offsets]
 
-        # Save initial knuckle state
-        knuckle.save_state()
+        # Save initial suspension state
+        if self._initial_snapshot is None:
+            self.save_initial_state()
+        initial_snapshot = self.get_state_snapshot()
 
-        # Collect tire contact patch positions at each z offset
+        # Collect wheel center and contact patch positions at each z offset
+        wheel_centers = []
         contact_points = []
+        solve_errors = []
 
         try:
             for z_offset in z_offsets_mm:
-                # Reset to original position
-                knuckle.reset_to_origin()
+                # Reset to initial state
+                self.restore_state_snapshot(initial_snapshot)
 
-                # Apply z-axis displacement
-                knuckle.translate([0, 0, z_offset], unit='mm')
+                # Solve for this heave position using constraint-based kinematics
+                result = self.solve_for_heave(z_offset, unit='mm', initial_guess=initial_guess)
 
-                # Capture tire contact patch position
-                contact_point = knuckle.get_tire_contact_patch(unit='mm')
+                # Check if solve was successful
+                rms_error = result.get_rms_error()
+                solve_errors.append(rms_error)
+
+                # Get wheel center position from solved state
+                wheel_center_pos = self.wheel_center.position.copy()  # Already in mm
+                wheel_centers.append(wheel_center_pos)
+
+                # Calculate tire contact patch position
+                # Contact patch is at ground level (z=0), directly below wheel center
+                contact_point = wheel_center_pos.copy()
+                contact_point[2] = 0.0  # Project to ground
                 contact_points.append(contact_point)
 
         finally:
-            # Always restore original state, even if error occurs
-            knuckle.reset_to_origin()
+            # Always restore original state
+            self.restore_state_snapshot(initial_snapshot)
 
-        # Convert to numpy array for analysis
+        # Convert to numpy arrays for analysis
         contact_points = np.array(contact_points)
+        wheel_centers = np.array(wheel_centers)
 
         # Calculate roll instant center (YZ plane projection)
         roll_result = calculate_instant_center_from_points(contact_points, 'YZ')
@@ -505,6 +529,8 @@ class CornerSolver(SuspensionSolver):
         roll_residuals = from_mm(roll_result['residuals'], unit)
         pitch_residuals = from_mm(pitch_result['residuals'], unit)
         contact_points_output = from_mm(contact_points, unit)
+        wheel_centers_output = from_mm(wheel_centers, unit)
+        solve_errors_output = [from_mm(err, unit) for err in solve_errors]
 
         return {
             'roll_center': roll_center,
@@ -512,10 +538,12 @@ class CornerSolver(SuspensionSolver):
             'roll_radius': roll_radius,
             'pitch_radius': pitch_radius,
             'contact_points': contact_points_output,
+            'wheel_centers': wheel_centers_output,
             'roll_fit_quality': roll_result['fit_quality'],
             'pitch_fit_quality': pitch_result['fit_quality'],
             'roll_residuals': roll_residuals,
-            'pitch_residuals': pitch_residuals
+            'pitch_residuals': pitch_residuals,
+            'solve_errors': solve_errors_output
         }
 
     def reset_to_initial_state(self):
