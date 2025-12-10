@@ -25,7 +25,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import numpy as np
-from pysuspension import CornerSolver, SuspensionLink, AttachmentPoint
+from pysuspension import CornerSolver, SuspensionLink, AttachmentPoint, SuspensionKnuckle
 
 
 def create_double_wishbone_suspension(name="front_corner", track_width=1500):
@@ -122,18 +122,28 @@ def example_basic_instant_center():
     # Create a double wishbone suspension
     solver = create_double_wishbone_suspension("front_left")
 
+    # Create suspension knuckle with tire geometry
+    knuckle = SuspensionKnuckle(
+        tire_center_x=1400,
+        tire_center_y=1500,
+        rolling_radius=390,
+        camber_angle=-1.0,  # -1° negative camber
+        unit='mm'
+    )
+
     print(f"\nSuspension Configuration:")
     print(f"  Type: Double wishbone")
     print(f"  Wheel center: {solver.wheel_center.position} mm")
     print(f"  Number of links: {len(solver.links)}")
     print(f"  Number of constraints: {len(solver.constraints)}")
+    print(f"  Tire camber: {np.degrees(knuckle.camber_angle):.1f}°")
 
     # Calculate instant centers using default motion range (±10mm)
     print(f"\nCalculating instant centers...")
     print(f"  Motion range: ±10mm vertical travel")
     print(f"  Sample points: 5 positions [0, +5, +10, -5, -10] mm")
 
-    result = solver.calculate_instant_centers(unit='mm')
+    result = solver.calculate_instant_centers(knuckle, unit='mm')
 
     # Display results
     print(f"\n{'='*70}")
@@ -180,6 +190,15 @@ def example_custom_motion_range():
     # Create suspension
     solver = create_double_wishbone_suspension("rear_corner", track_width=1600)
 
+    # Create knuckle for rear suspension
+    knuckle = SuspensionKnuckle(
+        tire_center_x=1400,
+        tire_center_y=1600,
+        rolling_radius=390,
+        camber_angle=-2.0,  # More camber in rear
+        unit='mm'
+    )
+
     print(f"\nRear Suspension Configuration:")
     print(f"  Wider track width: {solver.wheel_center.position[1] * 2:.0f} mm total")
 
@@ -192,6 +211,7 @@ def example_custom_motion_range():
     print(f"  Z offsets: {z_offsets} mm")
 
     result = solver.calculate_instant_centers(
+        knuckle,
         z_offsets=z_offsets,
         unit='mm'
     )
@@ -230,7 +250,17 @@ def example_compare_track_widths():
         print(f"  Track width: {track_width * 2} mm total")
 
         solver = create_double_wishbone_suspension("comparison", track_width)
-        result = solver.calculate_instant_centers(unit='mm')
+
+        # Create knuckle matching the track width
+        knuckle = SuspensionKnuckle(
+            tire_center_x=1400,
+            tire_center_y=track_width,
+            rolling_radius=390,
+            camber_angle=-1.0,
+            unit='mm'
+        )
+
+        result = solver.calculate_instant_centers(knuckle, unit='mm')
         results.append(result)
 
         print(f"  → Roll center: Y={result['roll_center'][1]:.1f} mm, "
@@ -266,6 +296,15 @@ def example_high_resolution_analysis():
 
     solver = create_double_wishbone_suspension("high_res")
 
+    # Create knuckle
+    knuckle = SuspensionKnuckle(
+        tire_center_x=1400,
+        tire_center_y=1500,
+        rolling_radius=390,
+        camber_angle=-1.5,
+        unit='mm'
+    )
+
     # Use many sample points for high accuracy
     z_offsets = np.linspace(-20, 20, 21).tolist()
 
@@ -275,6 +314,7 @@ def example_high_resolution_analysis():
     print(f"  Point spacing: {z_offsets[1] - z_offsets[0]:.1f} mm")
 
     result = solver.calculate_instant_centers(
+        knuckle,
         z_offsets=z_offsets,
         unit='mm'
     )
@@ -314,6 +354,15 @@ def example_different_units():
 
     solver = create_double_wishbone_suspension("metric_test")
 
+    # Create knuckle
+    knuckle = SuspensionKnuckle(
+        tire_center_x=1400,
+        tire_center_y=1500,
+        rolling_radius=390,
+        camber_angle=-1.0,
+        unit='mm'
+    )
+
     # Use meter-based offsets
     z_offsets_m = [0, 0.005, 0.010, -0.005, -0.010]
 
@@ -321,6 +370,7 @@ def example_different_units():
     print(f"  Z offsets: {z_offsets_m} m")
 
     result = solver.calculate_instant_centers(
+        knuckle,
         z_offsets=z_offsets_m,
         unit='m'  # Output in meters
     )

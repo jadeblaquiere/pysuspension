@@ -12,6 +12,7 @@ import numpy as np
 from pysuspension.corner_solver import CornerSolver
 from pysuspension.suspension_link import SuspensionLink
 from pysuspension.attachment_point import AttachmentPoint
+from pysuspension.suspension_knuckle import SuspensionKnuckle
 
 
 def create_simple_suspension():
@@ -104,11 +105,20 @@ def test_instant_center_basic():
     print(f"  Wheel center: {solver.wheel_center.position} mm")
     print(f"  Number of constraints: {len(solver.constraints)}")
 
+    # Create a suspension knuckle with tire geometry
+    knuckle = SuspensionKnuckle(
+        tire_center_x=1400,
+        tire_center_y=750,
+        rolling_radius=390,
+        camber_angle=0.0,
+        unit='mm'
+    )
+
     # Calculate instant centers with default z offsets
     print("\n--- Calculating Instant Centers ---")
     print("Using default z_offsets: [0, 5, 10, -5, -10] mm")
 
-    result = solver.calculate_instant_centers(unit='mm')
+    result = solver.calculate_instant_centers(knuckle, unit='mm')
 
     print(f"\n--- Results ---")
     print(f"Roll center:  {result['roll_center']} mm")
@@ -154,11 +164,20 @@ def test_instant_center_custom_offsets():
     # Create suspension
     solver = create_simple_suspension()
 
+    # Create knuckle
+    knuckle = SuspensionKnuckle(
+        tire_center_x=1400,
+        tire_center_y=750,
+        rolling_radius=390,
+        unit='mm'
+    )
+
     # Use larger range of motion
     z_offsets = [-20, -10, 0, 10, 20, 30]
     print(f"\nUsing custom z_offsets: {z_offsets} mm")
 
     result = solver.calculate_instant_centers(
+        knuckle,
         z_offsets=z_offsets,
         unit='mm'
     )
@@ -184,9 +203,18 @@ def test_instant_center_units():
     # Create suspension
     solver = create_simple_suspension()
 
+    # Create knuckle
+    knuckle = SuspensionKnuckle(
+        tire_center_x=1400,
+        tire_center_y=750,
+        rolling_radius=390,
+        unit='mm'
+    )
+
     # Test with millimeter offsets
     print("\n--- Test 1: mm offsets, mm output ---")
     result_mm = solver.calculate_instant_centers(
+        knuckle,
         z_offsets=[0, 5, 10, -5, -10],
         unit='mm'
     )
@@ -199,6 +227,7 @@ def test_instant_center_units():
     # Test with meter offsets
     print("\n--- Test 2: m offsets, m output ---")
     result_m = solver.calculate_instant_centers(
+        knuckle,
         z_offsets=[0, 0.005, 0.010, -0.005, -0.010],
         unit='m'
     )
@@ -219,11 +248,19 @@ def test_instant_center_error_handling():
     print("TEST: Instant Center Error Handling")
     print("=" * 70)
 
+    # Create knuckle for testing
+    knuckle = SuspensionKnuckle(
+        tire_center_x=1400,
+        tire_center_y=750,
+        rolling_radius=390,
+        unit='mm'
+    )
+
     # Test without wheel_center set
     print("\n--- Testing missing wheel_center ---")
     solver_no_wheel = CornerSolver("error_test")
     try:
-        solver_no_wheel.calculate_instant_centers()
+        solver_no_wheel.calculate_instant_centers(knuckle)
         assert False, "Should raise ValueError when wheel_center not set"
     except ValueError as e:
         print(f"✓ Correctly raised ValueError: {e}")
@@ -234,8 +271,16 @@ def test_instant_center_error_handling():
     # Test insufficient z_offsets
     print("\n--- Testing insufficient z_offsets ---")
     try:
-        solver.calculate_instant_centers(z_offsets=[0, 5])
+        solver.calculate_instant_centers(knuckle, z_offsets=[0, 5])
         assert False, "Should raise ValueError for insufficient offsets"
+    except ValueError as e:
+        print(f"✓ Correctly raised ValueError: {e}")
+
+    # Test invalid knuckle type
+    print("\n--- Testing invalid knuckle type ---")
+    try:
+        solver.calculate_instant_centers("not a knuckle")
+        assert False, "Should raise ValueError for invalid knuckle"
     except ValueError as e:
         print(f"✓ Correctly raised ValueError: {e}")
 
@@ -252,12 +297,23 @@ def test_instant_center_realistic_suspension():
     # This will produce realistic kinematic motion through the control arms
     solver = create_simple_suspension()
 
+    # Create knuckle
+    knuckle = SuspensionKnuckle(
+        tire_center_x=1400,
+        tire_center_y=750,
+        rolling_radius=390,
+        camber_angle=-1.5,  # -1.5 degrees negative camber
+        unit='mm'
+    )
+
     # Use a finer set of measurements
     z_offsets = np.linspace(-15, 15, 7).tolist()
     print(f"\nUsing {len(z_offsets)} measurement points")
     print(f"Z offset range: {z_offsets[0]:.1f} to {z_offsets[-1]:.1f} mm")
+    print(f"Knuckle camber: {np.degrees(knuckle.camber_angle):.1f}°")
 
     result = solver.calculate_instant_centers(
+        knuckle,
         z_offsets=z_offsets,
         unit='mm'
     )
