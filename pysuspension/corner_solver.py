@@ -24,6 +24,7 @@ from .attachment_point import AttachmentPoint
 from .control_arm import ControlArm
 from .suspension_link import SuspensionLink
 from .units import to_mm, from_mm
+from .geometry_utils import calculate_instant_center_from_points
 
 
 class CornerSolver(SuspensionSolver):
@@ -396,6 +397,126 @@ class CornerSolver(SuspensionSolver):
             return caster_rad
         else:
             raise ValueError(f"Unknown angle unit '{unit}'. Use 'deg' or 'rad'")
+
+    def calculate_instant_centers(self,
+                                  knuckle: 'SuspensionKnuckle',
+                                  z_offsets: Optional[List[float]] = None,
+                                  unit: str = 'mm') -> Dict[str, any]:
+        """
+        Calculate roll and pitch instant centers for the suspension corner.
+
+        This method simulates vertical motion (heave) of the suspension knuckle
+        and analyzes the resulting arc traced by the tire contact patch. The
+        instant centers are found by fitting circles to the projected contact
+        point trajectories.
+
+        The method:
+        1. Saves the initial knuckle state
+        2. Moves the knuckle through specified z-axis displacements
+        3. Captures the tire contact patch position at each displacement
+        4. Returns knuckle to original position
+        5. Projects contact points onto YZ plane (for roll center)
+        6. Projects contact points onto XZ plane (for pitch center)
+        7. Fits circles to the projected points
+        8. Returns the circle centers as instant centers
+
+        Args:
+            knuckle: SuspensionKnuckle object to analyze
+            z_offsets: List of z-axis displacements to test in specified unit
+                      Default: [0, 5, 10, -5, -10] mm
+            unit: Unit for z_offsets and output positions (default: 'mm')
+
+        Returns:
+            Dictionary containing:
+                - 'roll_center': [x, y, z] - Roll instant center position
+                - 'pitch_center': [x, y, z] - Pitch instant center position
+                - 'roll_radius': float - Fitted circle radius for roll motion
+                - 'pitch_radius': float - Fitted circle radius for pitch motion
+                - 'contact_points': Nx3 array - Captured tire contact positions
+                - 'roll_fit_quality': float - Normalized RMS residual for roll fit
+                - 'pitch_fit_quality': float - Normalized RMS residual for pitch fit
+                - 'roll_residuals': float - Absolute RMS residual for roll fit
+                - 'pitch_residuals': float - Absolute RMS residual for pitch fit
+
+        Raises:
+            ValueError: If insufficient z_offsets provided or knuckle is invalid
+
+        Example:
+            >>> from pysuspension import CornerSolver, SuspensionKnuckle
+            >>> knuckle = SuspensionKnuckle(tire_center_x=1.5, tire_center_y=0.75,
+            ...                            rolling_radius=0.35, unit='m')
+            >>> solver = CornerSolver()
+            >>> result = solver.calculate_instant_centers(knuckle)
+            >>> print(f"Roll center: {result['roll_center']} mm")
+            >>> print(f"Pitch center: {result['pitch_center']} mm")
+        """
+        # Import here to avoid circular dependency
+        from .suspension_knuckle import SuspensionKnuckle
+
+        # Validate inputs
+        if not isinstance(knuckle, SuspensionKnuckle):
+            raise ValueError("knuckle must be a SuspensionKnuckle object")
+
+        if z_offsets is None:
+            z_offsets = [0, 5, 10, -5, -10]  # Default in mm
+
+        if len(z_offsets) < 3:
+            raise ValueError(f"Need at least 3 z_offsets for circle fitting, got {len(z_offsets)}")
+
+        # Convert z_offsets to mm for internal calculations
+        z_offsets_mm = [to_mm(z, unit) for z in z_offsets]
+
+        # Save initial knuckle state
+        knuckle.save_state()
+
+        # Collect tire contact patch positions at each z offset
+        contact_points = []
+
+        try:
+            for z_offset in z_offsets_mm:
+                # Reset to original position
+                knuckle.reset_to_origin()
+
+                # Apply z-axis displacement
+                knuckle.translate([0, 0, z_offset], unit='mm')
+
+                # Capture tire contact patch position
+                contact_point = knuckle.get_tire_contact_patch(unit='mm')
+                contact_points.append(contact_point)
+
+        finally:
+            # Always restore original state, even if error occurs
+            knuckle.reset_to_origin()
+
+        # Convert to numpy array for analysis
+        contact_points = np.array(contact_points)
+
+        # Calculate roll instant center (YZ plane projection)
+        roll_result = calculate_instant_center_from_points(contact_points, 'YZ')
+
+        # Calculate pitch instant center (XZ plane projection)
+        pitch_result = calculate_instant_center_from_points(contact_points, 'XZ')
+
+        # Convert results to requested unit
+        roll_center = from_mm(roll_result['center_3d'], unit)
+        pitch_center = from_mm(pitch_result['center_3d'], unit)
+        roll_radius = from_mm(roll_result['radius'], unit)
+        pitch_radius = from_mm(pitch_result['radius'], unit)
+        roll_residuals = from_mm(roll_result['residuals'], unit)
+        pitch_residuals = from_mm(pitch_result['residuals'], unit)
+        contact_points_output = from_mm(contact_points, unit)
+
+        return {
+            'roll_center': roll_center,
+            'pitch_center': pitch_center,
+            'roll_radius': roll_radius,
+            'pitch_radius': pitch_radius,
+            'contact_points': contact_points_output,
+            'roll_fit_quality': roll_result['fit_quality'],
+            'pitch_fit_quality': pitch_result['fit_quality'],
+            'roll_residuals': roll_residuals,
+            'pitch_residuals': pitch_residuals
+        }
 
     def reset_to_initial_state(self):
         """Reset suspension to initial configuration."""
