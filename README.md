@@ -78,6 +78,90 @@ upper_link = SuspensionLink(
 )
 ```
 
+## Working with Suspension Joints
+
+The library supports modeling realistic suspension systems with different joint types and compliance characteristics.
+
+### Simple Approach: Geometry-Based Constraints
+
+For basic suspensions, you can rely on geometric constraints alone:
+
+```python
+from pysuspension import CornerSolver, SuspensionLink, AttachmentPoint
+
+solver = CornerSolver("front_left")
+
+# Create control arm links
+upper_front = SuspensionLink([1400, 0, 600], [1400, 650, 580], "upper_front", unit='mm')
+upper_rear = SuspensionLink([1200, 0, 600], [1400, 650, 580], "upper_rear", unit='mm')
+
+# Mark chassis mounts
+solver.chassis_mounts.extend([upper_front.endpoint1, upper_rear.endpoint1])
+
+# Add links - geometry naturally constrains the ball joint location
+solver.add_link(upper_front, end1_mount_point=upper_front.endpoint1)
+solver.add_link(upper_rear, end1_mount_point=upper_rear.endpoint1)
+```
+
+When two links from the same control arm meet at a ball joint, the geometry (fixed chassis mounts + link lengths) naturally constrains the joint location. **No explicit joint definition needed.**
+
+### Advanced Approach: Joint-Centric API
+
+For realistic suspensions with **mixed compliance** (e.g., ball joints at the knuckle, soft bushings at chassis mounts), use the joint-centric API:
+
+```python
+from pysuspension import CornerSolver, ControlArm, SuspensionLink, AttachmentPoint
+from pysuspension.joint_types import JointType
+
+solver = CornerSolver("front_left")
+
+# Create control arm
+upper_arm = ControlArm("upper_control_arm")
+front_link = SuspensionLink([1300, 0, 600], [1400, 1400, 580], "front_link", unit='mm')
+rear_link = SuspensionLink([1200, 0, 600], [1400, 1400, 580], "rear_link", unit='mm')
+upper_arm.add_link(front_link)
+upper_arm.add_link(rear_link)
+
+# Create separate knuckle attachment point
+knuckle_upper = AttachmentPoint("knuckle_upper", [1400, 1400, 580], unit='mm')
+
+# Create chassis attachment points
+chassis_front = AttachmentPoint("chassis_front", [1300, 0, 600], unit='mm')
+chassis_rear = AttachmentPoint("chassis_rear", [1200, 0, 600], unit='mm')
+
+# Define joints with DIFFERENT compliance at each mount
+solver.add_joint("ball_joint", [front_link.endpoint2, knuckle_upper], JointType.BALL_JOINT)  # Stiff
+solver.add_joint("front_bushing", [front_link.endpoint1, chassis_front], JointType.BUSHING_SOFT)  # Compliant
+solver.add_joint("rear_bushing", [rear_link.endpoint1, chassis_rear], JointType.BUSHING_SOFT)  # Compliant
+
+# Add control arm with mixed joints
+solver.add_control_arm(
+    control_arm=upper_arm,
+    chassis_mount_points=[front_link.endpoint1, rear_link.endpoint1],
+    knuckle_mount_points=[front_link.endpoint2]
+)
+```
+
+**Available Joint Types:**
+- `RIGID`: Infinitely stiff (stiffness = 1e9 N/mm)
+- `BALL_JOINT`: Very stiff spherical joint (100,000 N/mm)
+- `BUSHING_HARD`: Hard rubber bushing (10,000 N/mm)
+- `BUSHING_MEDIUM`: Medium rubber bushing (1,000 N/mm)
+- `BUSHING_SOFT`: Soft rubber bushing (100 N/mm)
+- `CUSTOM`: User-defined stiffness
+
+### When to Use Each Approach
+
+**Use geometry-based (simple) when:**
+- All joints have similar stiffness
+- You're analyzing basic kinematics
+- Compliance modeling isn't critical
+
+**Use joint-centric (advanced) when:**
+- You need mixed joint types (stiff + compliant)
+- Modeling realistic suspension compliance
+- Analyzing suspension compliance effects on kinematics
+
 ## Key Concepts
 
 ### Unit System
@@ -179,10 +263,28 @@ pytest --cov=pysuspension
 
 ## Examples
 
+### Complete Examples
+
+See the `examples/` directory:
+- **`instant_center_analysis.py`**: Calculate roll and pitch instant centers using constraint-based kinematics
+  - Demonstrates suspension motion analysis
+  - Shows how to use CornerSolver for heave travel
+  - Includes 5 different analysis scenarios
+
+Run the instant center examples:
+```bash
+python examples/instant_center_analysis.py
+```
+
+### Test Suite Examples
+
 See the `tests/` directory for comprehensive examples:
+- `test_instant_center.py`: Integration tests for instant center analysis
+- `test_corner_solver.py`: Solving suspension kinematics
+- `test_new_joint_api.py`: Using the joint-centric API with mixed compliance
+- `test_joint_api.py`: Joint registry and inspection methods
 - `test_integrated_suspension.py`: Complete suspension system setup
 - `test_constraints.py`: Using geometric constraints
-- `test_corner_solver.py`: Solving suspension kinematics
 - `test_coil_spring_refactor.py`: Working with springs
 
 ## Development Status
