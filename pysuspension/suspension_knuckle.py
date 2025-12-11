@@ -345,7 +345,8 @@ class SuspensionKnuckle(RigidBody):
             wheel_offset=data.get('wheel_offset', 0.0),
             mass=data.get('mass', 0.0),
             unit=data.get('unit', 'mm'),
-            mass_unit=data.get('mass_unit', 'kg')
+            mass_unit=data.get('mass_unit', 'kg'),
+            name=data.get('name', 'knuckle')
         )
 
         # Add attachment points (all absolute positioning now)
