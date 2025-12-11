@@ -23,6 +23,7 @@ from .joint_types import JointType
 from .attachment_point import AttachmentPoint
 from .control_arm import ControlArm
 from .suspension_link import SuspensionLink
+from .suspension_joint import SuspensionJoint
 from .units import to_mm, from_mm
 from .geometry_utils import calculate_instant_center_from_points
 
@@ -52,6 +53,9 @@ class CornerSolver(SuspensionSolver):
         """
         super().__init__(name=name)
 
+        # Joint registry - joints are first-class objects
+        self.joints: Dict[str, SuspensionJoint] = {}
+
         # Component tracking
         self.control_arms: List[ControlArm] = []
         self.links: List[SuspensionLink] = []
@@ -63,6 +67,169 @@ class CornerSolver(SuspensionSolver):
 
         # Initial state for resetting
         self._initial_snapshot = None
+
+    def add_joint(self,
+                 name: str,
+                 points: List[AttachmentPoint],
+                 joint_type: JointType,
+                 stiffness: Optional[float] = None) -> SuspensionJoint:
+        """
+        Add a joint connecting multiple attachment points.
+
+        This is the primary method for defining joints in the solver. Joints are
+        first-class objects that define compliance between connected points.
+        All components (links, control arms) are rigid - only joints have compliance.
+
+        Args:
+            name: Unique identifier for the joint
+            points: List of AttachmentPoint objects to connect (must be 2+)
+            joint_type: Type of joint (BALL_JOINT, BUSHING_SOFT, etc.)
+            stiffness: Custom stiffness in N/mm (overrides joint_type default)
+
+        Returns:
+            SuspensionJoint object that was created and registered
+
+        Raises:
+            ValueError: If name already exists or insufficient points provided
+
+        Examples:
+            # Ball joint connecting control arm to knuckle
+            ball_joint = solver.add_joint(
+                name="upper_ball_joint",
+                points=[control_arm.endpoint, knuckle.upper_mount],
+                joint_type=JointType.BALL_JOINT
+            )
+
+            # Soft bushing at chassis mount
+            bushing = solver.add_joint(
+                name="front_bushing",
+                points=[control_arm.front_mount, chassis.mount_point],
+                joint_type=JointType.BUSHING_SOFT
+            )
+
+            # Custom stiffness bushing
+            custom_joint = solver.add_joint(
+                name="custom_bushing",
+                points=[link.end1, chassis.mount],
+                joint_type=JointType.CUSTOM,
+                stiffness=500.0  # 500 N/mm
+            )
+        """
+        # Validate inputs
+        if name in self.joints:
+            raise ValueError(f"Joint '{name}' already exists in solver")
+
+        if len(points) < 2:
+            raise ValueError(
+                f"Joint '{name}' must connect at least 2 points, got {len(points)}"
+            )
+
+        # Create the joint
+        joint = SuspensionJoint(name=name, joint_type=joint_type)
+
+        # Store custom stiffness if provided
+        if stiffness is not None:
+            joint.stiffness = stiffness
+
+        # Connect all attachment points to this joint
+        for point in points:
+            joint.add_attachment_point(point)
+
+        # Register the joint
+        self.joints[name] = joint
+
+        return joint
+
+    def get_joint(self, name: str) -> SuspensionJoint:
+        """
+        Get a joint by name.
+
+        Args:
+            name: Name of the joint
+
+        Returns:
+            SuspensionJoint object
+
+        Raises:
+            KeyError: If joint name doesn't exist
+        """
+        if name not in self.joints:
+            raise KeyError(f"Joint '{name}' not found in solver")
+        return self.joints[name]
+
+    def get_joints_at_point(self, point: AttachmentPoint) -> List[SuspensionJoint]:
+        """
+        Get all joints connected to a specific attachment point.
+
+        Args:
+            point: AttachmentPoint to query
+
+        Returns:
+            List of SuspensionJoint objects connected to this point
+        """
+        connected_joints = []
+        for joint in self.joints.values():
+            if any(p is point for p in joint.attachment_points):
+                connected_joints.append(joint)
+        return connected_joints
+
+    def get_joint_compliance(self, joint_name: str) -> float:
+        """
+        Get compliance (mm/N) of a joint.
+
+        Args:
+            joint_name: Name of the joint
+
+        Returns:
+            Compliance in mm/N
+
+        Raises:
+            KeyError: If joint doesn't exist
+        """
+        from .joint_types import JOINT_STIFFNESS
+
+        joint = self.get_joint(joint_name)
+
+        # Use custom stiffness if available
+        if hasattr(joint, 'stiffness') and joint.stiffness is not None:
+            return 1.0 / joint.stiffness
+
+        # Otherwise use standard stiffness for the joint type
+        stiffness = JOINT_STIFFNESS[joint.joint_type]
+        return 1.0 / stiffness
+
+    def get_joint_stiffness(self, joint_name: str) -> float:
+        """
+        Get stiffness (N/mm) of a joint.
+
+        Args:
+            joint_name: Name of the joint
+
+        Returns:
+            Stiffness in N/mm
+
+        Raises:
+            KeyError: If joint doesn't exist
+        """
+        from .joint_types import JOINT_STIFFNESS
+
+        joint = self.get_joint(joint_name)
+
+        # Use custom stiffness if available
+        if hasattr(joint, 'stiffness') and joint.stiffness is not None:
+            return joint.stiffness
+
+        # Otherwise use standard stiffness for the joint type
+        return JOINT_STIFFNESS[joint.joint_type]
+
+    def list_joints(self) -> List[str]:
+        """
+        Get list of all joint names in the solver.
+
+        Returns:
+            List of joint names
+        """
+        return list(self.joints.keys())
 
     def add_control_arm(self,
                        control_arm: ControlArm,
