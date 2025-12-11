@@ -294,114 +294,131 @@ def get_joint_stiffness(self, joint_name: str) -> float:
 
 ---
 
-## 4. Migration Path
+## 4. Implementation Phases (Breaking Change)
 
-### 4.1 Phase 1: Add Joint Registry (Non-Breaking)
+**Note**: No backward compatibility is required. This is a breaking change to the API.
 
-**Goal**: Add joint functionality without breaking existing API
+### 4.1 Phase 1: Core Joint Infrastructure
+
+**Goal**: Implement joint registry and constraint auto-inference
 
 1. Add `self.joints` dictionary to `CornerSolver.__init__()`
 2. Implement `add_joint()` method
 3. Modify `CoincidentPointConstraint` to use `joint_type=None` (auto-infer from points)
 4. Update `_infer_joint_type_from_points()` to be the primary mechanism
+5. Implement joint inspection methods (`get_joint()`, `get_joints_at_point()`, etc.)
 
-**Compatibility**: Existing code continues to work unchanged
+**Deliverables**:
+- Joint registry working
+- Auto-inference from attachment points functional
+- Basic tests passing
 
-### 4.2 Phase 2: Add New API Variants (Non-Breaking)
+### 4.2 Phase 2: Update Solver API
 
-**Goal**: Provide new simplified API alongside old API
+**Goal**: Replace old API with new joint-centric API
 
-1. Add new signatures for `add_control_arm()` and `add_link()`:
-   - Keep old signatures with `joint_type` parameter (deprecated)
-   - Add new signatures without `joint_type` parameter (preferred)
-2. Add joint inspection methods
-3. Update examples to show both old and new approaches
+1. **Remove** `joint_type` parameter from `add_control_arm()`
+2. **Remove** `joint_type` parameter from `add_link()`
+3. Simplify these methods to use joint auto-inference only
+4. Update parameter signatures to use `chassis_mount_points` and `knuckle_mount_points`
+5. Implement `_generate_constraints_for_control_arm()` using joint topology
 
-**Compatibility**: Both old and new APIs work
+**Deliverables**:
+- New API replaces old API entirely
+- Constraint generation from joints working
+- Joint validation implemented
 
-### 4.3 Phase 3: Deprecation Warnings
+### 4.3 Phase 3: Tests and Examples
 
-**Goal**: Warn users about upcoming breaking change
+**Goal**: Update all tests and examples to use new API
 
-1. Add `DeprecationWarning` when using old API with `joint_type` parameter
-2. Update all examples and tests to use new API
-3. Document migration guide for users
+1. Update `tests/test_corner_solver.py` to use new API
+2. Update `tests/test_instant_center.py` to use new API
+3. Create `tests/test_joint_api.py` for joint-specific tests
+4. Create `tests/test_mixed_joint_control_arm.py` for realistic scenarios
+5. Update all examples to use new API
+6. Create `examples/double_wishbone_with_bushings.py` to demonstrate mixed joints
 
-### 4.4 Phase 4: Breaking Change (Future Release)
+**Deliverables**:
+- All tests passing with new API
+- Comprehensive test coverage for joints
+- Examples demonstrate realistic joint usage
 
-**Goal**: Remove old API, enforce joint-centric design
+### 4.4 Phase 4: Documentation and Finalization
 
-1. Remove `joint_type` parameters from `add_control_arm()` and `add_link()`
-2. Require all joints to be defined via `add_joint()`
-3. Update all documentation
+**Goal**: Complete documentation and polish
+
+1. Update `README.md` with new API examples
+2. Create `docs/joint_types_guide.md`
+3. Update API reference documentation
+4. Add inline code documentation
+5. Final integration testing
+
+**Deliverables**:
+- Complete documentation
+- All examples working
+- Ready for production use
 
 ---
 
-## 5. Backward Compatibility Strategy
+## 5. Breaking Changes Summary
 
-### 5.1 Compatibility Decorator
+**Note**: This refactoring introduces breaking changes to the API. No backward compatibility is provided.
 
-Use a decorator to maintain old API while introducing new one:
+### 5.1 Removed Parameters
 
-```python
-def _handle_legacy_joint_type(func):
-    """Decorator to handle legacy joint_type parameter."""
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        if 'joint_type' in kwargs:
-            warnings.warn(
-                "Passing joint_type to add_control_arm/add_link is deprecated. "
-                "Use add_joint() to define joints explicitly.",
-                DeprecationWarning,
-                stacklevel=2
-            )
-            # Convert legacy API to new API internally
-            # ...
-        return func(self, *args, **kwargs)
-    return wrapper
-```
+**`CornerSolver.add_control_arm()`**:
+- ❌ **REMOVED**: `joint_type` parameter
+- ❌ **REMOVED**: `chassis_mount_indices` parameter (replaced with `chassis_mount_points`)
+- ❌ **REMOVED**: `knuckle_mount_index` parameter (replaced with `knuckle_mount_points`)
 
-### 5.2 Automatic Joint Creation (Transition Helper)
+**`CornerSolver.add_link()`**:
+- ❌ **REMOVED**: `joint_type` parameter
+- ✏️ **CHANGED**: `end1_is_chassis` / `end2_is_chassis` → `end1_mount_point` / `end2_mount_point`
 
-When old API is used, automatically create implicit joints:
+### 5.2 New Requirements
+
+**Before adding components**:
+1. ✅ **REQUIRED**: Call `add_joint()` to define all joints explicitly
+2. ✅ **REQUIRED**: Specify which attachment points connect via each joint
+3. ✅ **REQUIRED**: Provide `AttachmentPoint` objects instead of indices
+
+**Example migration**:
 
 ```python
-@_handle_legacy_joint_type
-def add_control_arm(self, control_arm, chassis_mount_indices=None,
-                   knuckle_mount_index=None, joint_type=JointType.BALL_JOINT):
-    """Add control arm with backward compatibility."""
+# OLD API (will not work):
+solver.add_control_arm(
+    control_arm=upper_arm,
+    chassis_mount_indices=[0, 1],
+    knuckle_mount_index=2,
+    joint_type=JointType.BALL_JOINT
+)
 
-    if joint_type is not None and knuckle_mount_index is not None:
-        # Legacy mode: automatically create joint
-        attachments = control_arm.get_all_attachment_points()
-        knuckle_point = attachments[knuckle_mount_index]
+# NEW API (required):
+# 1. Get attachment points
+attachments = upper_arm.get_all_attachment_points()
+front_chassis = attachments[0]
+rear_chassis = attachments[1]
+knuckle = attachments[2]
 
-        # Create implicit joint with auto-generated name
-        joint_name = f"_implicit_{control_arm.name}_knuckle"
-        self.add_joint(
-            name=joint_name,
-            points=[knuckle_point],  # Single point for now
-            joint_type=joint_type
-        )
+# 2. Define joints explicitly
+solver.add_joint("ball", [knuckle, knuckle_point], JointType.BALL_JOINT)
+solver.add_joint("front_bush", [front_chassis, chassis.uf], JointType.BUSHING_SOFT)
+solver.add_joint("rear_bush", [rear_chassis, chassis.ur], JointType.BUSHING_SOFT)
 
-    # Continue with new implementation
-    # ...
+# 3. Add control arm
+solver.add_control_arm(
+    control_arm=upper_arm,
+    chassis_mount_points=[front_chassis, rear_chassis],
+    knuckle_mount_points=[knuckle]
+)
 ```
 
-### 5.3 Version-Specific Behavior
+### 5.3 Version Number Change
 
-Use package version to control behavior:
-
-```python
-# In pysuspension/__init__.py
-LEGACY_MODE = False  # Set to True for v0.x, False for v1.0+
-
-# In corner_solver.py
-if LEGACY_MODE:
-    # Old behavior
-else:
-    # New behavior
-```
+This breaking change will require a major version bump:
+- Current version: `0.x.x`
+- New version: `1.0.0` (or next major version)
 
 ---
 
@@ -578,10 +595,10 @@ Modify existing tests to use new API:
 
 ### 7.3 Integration Tests
 
-**`tests/test_joint_migration.py`**:
-- Test that old API and new API produce equivalent results
-- Test deprecation warnings are issued correctly
-- Test serialization/deserialization with both APIs
+**`tests/test_joint_serialization.py`**:
+- Test serialization/deserialization with joints
+- Test joint registry persistence
+- Test complex joint topologies
 
 ### 7.4 Example Updates
 
@@ -609,11 +626,11 @@ Update all examples to demonstrate new API:
 - Stiffness values and physical interpretation
 - Effects on suspension behavior
 
-**`docs/api_migration_guide.md`**:
-- Step-by-step migration from old to new API
-- Code examples showing before/after
-- Deprecation timeline
-- FAQ
+**`docs/joints_api_guide.md`**:
+- Complete guide to new joint-centric API
+- Code examples for common scenarios
+- Best practices for joint definition
+- Troubleshooting common issues
 
 ### 8.2 Updated Documentation
 
@@ -635,16 +652,15 @@ Update all examples to demonstrate new API:
 
 ## 9. Implementation Timeline
 
-### Estimated Effort
+### Estimated Effort (Breaking Change - No Backward Compatibility)
 
 | Phase | Tasks | Estimated Effort | Dependencies |
 |-------|-------|-----------------|--------------|
-| Phase 1 | Joint registry, `add_joint()`, auto-inference | 2-3 days | None |
-| Phase 2 | New API variants, inspection methods | 2-3 days | Phase 1 |
-| Phase 3 | Tests, examples, deprecation warnings | 2-3 days | Phase 2 |
-| Phase 4 | Documentation, migration guide | 1-2 days | Phase 3 |
-| Phase 5 | Integration testing, bug fixes | 1-2 days | Phase 4 |
-| **Total** | | **8-13 days** | |
+| Phase 1 | Joint registry, `add_joint()`, auto-inference, inspection methods | 2-3 days | None |
+| Phase 2 | Update solver API, remove old parameters, constraint generation | 2-3 days | Phase 1 |
+| Phase 3 | Update all tests and examples | 2-3 days | Phase 2 |
+| Phase 4 | Documentation and finalization | 1-2 days | Phase 3 |
+| **Total** | | **7-11 days** | |
 
 ### Milestones
 
@@ -652,23 +668,26 @@ Update all examples to demonstrate new API:
    - Joint registry functional
    - `add_joint()` working
    - Auto-inference from points working
-   - Tests passing
+   - Joint inspection methods implemented
+   - Basic tests passing
 
-2. **M2: API Parity** (End of Phase 2)
-   - New API provides same functionality as old API
-   - Both APIs coexist
-   - Mixed joint control arms work
-   - Examples demonstrate new capabilities
+2. **M2: New API Complete** (End of Phase 2)
+   - Old API removed, new API in place
+   - Constraint generation from joints working
+   - Joint topology validation implemented
+   - Mixed joint control arms functional
 
-3. **M3: Production Ready** (End of Phase 3)
-   - All tests passing
-   - Deprecation warnings in place
+3. **M3: Tests and Examples Updated** (End of Phase 3)
+   - All tests passing with new API
+   - All examples updated
+   - New examples demonstrate mixed joints
+   - Comprehensive test coverage
+
+4. **M4: Production Ready** (End of Phase 4)
    - Documentation complete
-   - Migration guide published
-
-4. **M4: Breaking Change** (Future release, TBD)
-   - Old API removed
-   - Joint-centric design enforced
+   - API reference updated
+   - Ready for release
+   - Version bumped to 1.0.0
 
 ---
 
@@ -678,18 +697,19 @@ Update all examples to demonstrate new API:
 
 | Risk | Impact | Probability | Mitigation |
 |------|--------|-------------|------------|
-| Breaking existing user code | High | Medium | Phased migration with deprecation warnings |
+| Breaking existing code | High | **Certain** | **This is intentional - no mitigation needed** |
 | Performance degradation | Medium | Low | Benchmark before/after, optimize if needed |
 | Over-complicated API | Medium | Medium | Extensive examples and documentation |
 | Constraint generation bugs | High | Medium | Comprehensive unit and integration tests |
+| Joint validation too strict | Medium | Low | Test with real suspension geometries |
 
 ### 10.2 User Experience Risks
 
 | Risk | Impact | Probability | Mitigation |
 |------|--------|-------------|------------|
-| Users don't understand new API | High | Medium | Detailed migration guide, examples |
-| Users continue using deprecated API | Low | High | Clear deprecation timeline, warnings |
+| Users don't understand new API | High | Medium | Detailed documentation with clear examples |
 | Confusion about joint vs. constraint | Medium | Medium | Clear documentation, consistent terminology |
+| Too verbose (more code needed) | Low | Low | API is more explicit, but clearer intent |
 
 ---
 
@@ -698,12 +718,12 @@ Update all examples to demonstrate new API:
 The refactoring will be considered successful when:
 
 1. ✅ **Functionality**: Can model control arms with mixed joint types (ball + bushings)
-2. ✅ **Compatibility**: Existing code continues to work with deprecation warnings
-3. ✅ **API Clarity**: New API is intuitive and well-documented
-4. ✅ **Test Coverage**: >95% code coverage for new joint functionality
-5. ✅ **Performance**: No significant performance regression (<5% slower)
-6. ✅ **Documentation**: Complete migration guide and examples
-7. ✅ **User Adoption**: Examples and tests use new API exclusively
+2. ✅ **API Clarity**: New API is intuitive and well-documented
+3. ✅ **Test Coverage**: >95% code coverage for new joint functionality
+4. ✅ **Performance**: No significant performance regression (<5% slower)
+5. ✅ **Documentation**: Complete guide and examples
+6. ✅ **Clean Implementation**: All tests and examples use new API exclusively
+7. ✅ **Validation**: Joint topology validation catches common errors
 
 ---
 
