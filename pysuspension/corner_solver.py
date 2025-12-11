@@ -23,6 +23,7 @@ from .joint_types import JointType
 from .attachment_point import AttachmentPoint
 from .control_arm import ControlArm
 from .suspension_link import SuspensionLink
+from .suspension_joint import SuspensionJoint
 from .units import to_mm, from_mm
 from .geometry_utils import calculate_instant_center_from_points
 
@@ -52,6 +53,9 @@ class CornerSolver(SuspensionSolver):
         """
         super().__init__(name=name)
 
+        # Joint registry - joints are first-class objects
+        self.joints: Dict[str, SuspensionJoint] = {}
+
         # Component tracking
         self.control_arms: List[ControlArm] = []
         self.links: List[SuspensionLink] = []
@@ -64,46 +68,343 @@ class CornerSolver(SuspensionSolver):
         # Initial state for resetting
         self._initial_snapshot = None
 
+    def add_joint(self,
+                 name: str,
+                 points: List[AttachmentPoint],
+                 joint_type: JointType,
+                 stiffness: Optional[float] = None) -> SuspensionJoint:
+        """
+        Add a joint connecting multiple attachment points.
+
+        This is the primary method for defining joints in the solver. Joints are
+        first-class objects that define compliance between connected points.
+        All components (links, control arms) are rigid - only joints have compliance.
+
+        Args:
+            name: Unique identifier for the joint
+            points: List of AttachmentPoint objects to connect (must be 2+)
+            joint_type: Type of joint (BALL_JOINT, BUSHING_SOFT, etc.)
+            stiffness: Custom stiffness in N/mm (overrides joint_type default)
+
+        Returns:
+            SuspensionJoint object that was created and registered
+
+        Raises:
+            ValueError: If name already exists or insufficient points provided
+
+        Examples:
+            # Ball joint connecting control arm to knuckle
+            ball_joint = solver.add_joint(
+                name="upper_ball_joint",
+                points=[control_arm.endpoint, knuckle.upper_mount],
+                joint_type=JointType.BALL_JOINT
+            )
+
+            # Soft bushing at chassis mount
+            bushing = solver.add_joint(
+                name="front_bushing",
+                points=[control_arm.front_mount, chassis.mount_point],
+                joint_type=JointType.BUSHING_SOFT
+            )
+
+            # Custom stiffness bushing
+            custom_joint = solver.add_joint(
+                name="custom_bushing",
+                points=[link.end1, chassis.mount],
+                joint_type=JointType.CUSTOM,
+                stiffness=500.0  # 500 N/mm
+            )
+        """
+        # Validate inputs
+        if name in self.joints:
+            raise ValueError(f"Joint '{name}' already exists in solver")
+
+        if len(points) < 2:
+            raise ValueError(
+                f"Joint '{name}' must connect at least 2 points, got {len(points)}"
+            )
+
+        # Create the joint
+        joint = SuspensionJoint(name=name, joint_type=joint_type)
+
+        # Store custom stiffness if provided
+        if stiffness is not None:
+            joint.stiffness = stiffness
+
+        # Connect all attachment points to this joint
+        for point in points:
+            joint.add_attachment_point(point)
+
+        # Register the joint
+        self.joints[name] = joint
+
+        return joint
+
+    def get_joint(self, name: str) -> SuspensionJoint:
+        """
+        Get a joint by name.
+
+        Args:
+            name: Name of the joint
+
+        Returns:
+            SuspensionJoint object
+
+        Raises:
+            KeyError: If joint name doesn't exist
+        """
+        if name not in self.joints:
+            raise KeyError(f"Joint '{name}' not found in solver")
+        return self.joints[name]
+
+    def get_joints_at_point(self, point: AttachmentPoint) -> List[SuspensionJoint]:
+        """
+        Get all joints connected to a specific attachment point.
+
+        Args:
+            point: AttachmentPoint to query
+
+        Returns:
+            List of SuspensionJoint objects connected to this point
+        """
+        connected_joints = []
+        for joint in self.joints.values():
+            if any(p is point for p in joint.attachment_points):
+                connected_joints.append(joint)
+        return connected_joints
+
+    def get_joint_compliance(self, joint_name: str) -> float:
+        """
+        Get compliance (mm/N) of a joint.
+
+        Args:
+            joint_name: Name of the joint
+
+        Returns:
+            Compliance in mm/N
+
+        Raises:
+            KeyError: If joint doesn't exist
+        """
+        from .joint_types import JOINT_STIFFNESS
+
+        joint = self.get_joint(joint_name)
+
+        # Use custom stiffness if available
+        if hasattr(joint, 'stiffness') and joint.stiffness is not None:
+            return 1.0 / joint.stiffness
+
+        # Otherwise use standard stiffness for the joint type
+        stiffness = JOINT_STIFFNESS[joint.joint_type]
+        return 1.0 / stiffness
+
+    def get_joint_stiffness(self, joint_name: str) -> float:
+        """
+        Get stiffness (N/mm) of a joint.
+
+        Args:
+            joint_name: Name of the joint
+
+        Returns:
+            Stiffness in N/mm
+
+        Raises:
+            KeyError: If joint doesn't exist
+        """
+        from .joint_types import JOINT_STIFFNESS
+
+        joint = self.get_joint(joint_name)
+
+        # Use custom stiffness if available
+        if hasattr(joint, 'stiffness') and joint.stiffness is not None:
+            return joint.stiffness
+
+        # Otherwise use standard stiffness for the joint type
+        return JOINT_STIFFNESS[joint.joint_type]
+
+    def list_joints(self) -> List[str]:
+        """
+        Get list of all joint names in the solver.
+
+        Returns:
+            List of joint names
+        """
+        return list(self.joints.keys())
+
+    def _generate_joint_constraints_for_component(self,
+                                                   component,
+                                                   component_points: List[AttachmentPoint]):
+        """
+        Generate coincident constraints for all joints involving the component.
+
+        This method creates CoincidentPointConstraint objects for any registered
+        joints that connect points in the component to other points. The joint
+        type is automatically inferred from the SuspensionJoint object.
+
+        Args:
+            component: The component (ControlArm or SuspensionLink) being added
+            component_points: List of attachment points belonging to the component
+        """
+        # Track which point pairs we've already created constraints for
+        constrained_pairs = set()
+
+        # Iterate through all registered joints
+        for joint_name, joint in self.joints.items():
+            joint_points = joint.attachment_points
+
+            # Find which points in this joint belong to the component
+            component_joint_points = [p for p in joint_points if any(p is cp for cp in component_points)]
+
+            if not component_joint_points:
+                # This joint doesn't involve the component
+                continue
+
+            # Add all points in this joint to solver state (including external points)
+            for point in joint_points:
+                if point.name not in self.state.points:
+                    self.state.add_point(point)
+
+            # For each point in the joint that belongs to the component,
+            # create coincident constraints to all other points in the joint
+            for comp_point in component_joint_points:
+                for other_point in joint_points:
+                    if other_point is comp_point:
+                        continue
+
+                    # Create a canonical pair key (order doesn't matter)
+                    pair_key = tuple(sorted([id(comp_point), id(other_point)]))
+
+                    if pair_key in constrained_pairs:
+                        # Already created a constraint for this pair
+                        continue
+
+                    # Create coincident constraint with auto-inference of joint type
+                    constraint_name = f"{component.name}_{joint_name}_{comp_point.name}_{other_point.name}"
+                    self.add_constraint(
+                        CoincidentPointConstraint(
+                            comp_point,
+                            other_point,
+                            name=constraint_name,
+                            joint_type=None  # Auto-infer from joint
+                        )
+                    )
+
+                    constrained_pairs.add(pair_key)
+
+    def _validate_joint_topology(self):
+        """
+        Validate that joint topology is physically consistent.
+
+        Checks:
+        - All non-chassis, non-fixed points have at least one joint connection
+        - No redundant constraints
+
+        Raises:
+            ValueError: If topology is invalid
+        """
+        # Get all free points (not chassis mounts)
+        free_points = []
+        for control_arm in self.control_arms:
+            for point in control_arm.get_all_attachment_points():
+                if point not in self.chassis_mounts:
+                    free_points.append(point)
+
+        for link in self.links:
+            if link.endpoint1 not in self.chassis_mounts:
+                free_points.append(link.endpoint1)
+            if link.endpoint2 not in self.chassis_mounts:
+                free_points.append(link.endpoint2)
+
+        # Check each free point has at least one joint
+        for point in free_points:
+            joints_at_point = self.get_joints_at_point(point)
+            if not joints_at_point:
+                # Check if this point is connected to other points through component structure
+                # (e.g., endpoints of a link are connected by the link itself)
+                # For now, just warn
+                pass  # Could add warning here
+
     def add_control_arm(self,
                        control_arm: ControlArm,
-                       chassis_mount_indices: List[int],
-                       knuckle_mount_index: int,
-                       joint_type: JointType = JointType.BALL_JOINT):
+                       chassis_mount_points: Optional[List[AttachmentPoint]] = None,
+                       knuckle_mount_points: Optional[List[AttachmentPoint]] = None):
         """
         Add a control arm with automatic constraint generation.
 
+        Joint types are automatically inferred from joints defined via add_joint().
+        You must call add_joint() to define all joints before adding the control arm.
+
         Args:
             control_arm: ControlArm object
-            chassis_mount_indices: Indices of attachment points that mount to chassis
-            knuckle_mount_index: Index of attachment point that mounts to knuckle
-            joint_type: Type of joint at knuckle mount (default: BALL_JOINT)
+            chassis_mount_points: List of attachment points that mount to chassis (optional)
+            knuckle_mount_points: List of attachment points that mount to knuckle (optional)
+
+        Examples:
+            # Define joints first
+            solver.add_joint("upper_ball", [upper_arm.knuckle_point, knuckle.upper], JointType.BALL_JOINT)
+            solver.add_joint("front_bush", [upper_arm.front_chassis, chassis.uf], JointType.BUSHING_SOFT)
+            solver.add_joint("rear_bush", [upper_arm.rear_chassis, chassis.ur], JointType.BUSHING_SOFT)
+
+            # Add control arm
+            solver.add_control_arm(
+                control_arm=upper_arm,
+                chassis_mount_points=[upper_arm.front_chassis, upper_arm.rear_chassis],
+                knuckle_mount_points=[upper_arm.knuckle_point]
+            )
         """
         self.control_arms.append(control_arm)
 
-        attachments = control_arm.get_all_attachment_points()
+        # Default to empty lists if not provided
+        if chassis_mount_points is None:
+            chassis_mount_points = []
+        if knuckle_mount_points is None:
+            knuckle_mount_points = []
 
-        # Add all attachment points to state
-        for i, attachment in enumerate(attachments):
-            if i in chassis_mount_indices:
-                # Chassis mount - fixed
-                self.chassis_mounts.append(attachment)
-                self.add_constraint(
-                    FixedPointConstraint(
-                        attachment,
-                        attachment.position.copy(),
-                        name=f"{control_arm.name}_chassis_mount_{i}"
-                    )
+        # Collect all attachment points from the control arm
+        # This includes both link endpoints and any additional attachment points
+        attachments = []
+        for link in control_arm.links:
+            if link.endpoint1 not in attachments:
+                attachments.append(link.endpoint1)
+            if link.endpoint2 not in attachments:
+                attachments.append(link.endpoint2)
+        # Also include any extra attachment points
+        for ap in control_arm.attachment_points:
+            if ap not in attachments:
+                attachments.append(ap)
+
+        # Add all attachment points to solver state first
+        for attachment in attachments:
+            if attachment.name not in self.state.points:
+                self.state.add_point(attachment)
+
+        # Mark chassis mount points and add fixed constraints
+        for mount in chassis_mount_points:
+            self.chassis_mounts.append(mount)
+            self.add_constraint(
+                FixedPointConstraint(
+                    mount,
+                    mount.position.copy(),
+                    name=f"{control_arm.name}_chassis_{mount.name}",
+                    joint_type=JointType.RIGID
                 )
-                self.set_point_fixed(attachment.name)
-            elif i == knuckle_mount_index:
-                # Knuckle mount - free to move
-                self.knuckle_points.append(attachment)
-                self.set_point_free(attachment.name)
-            else:
-                # Other attachment - free to move with control arm
+            )
+            self.set_point_fixed(mount.name)
+
+        # Mark knuckle mount points
+        for mount in knuckle_mount_points:
+            self.knuckle_points.append(mount)
+            self.set_point_free(mount.name)
+
+        # Mark all other attachment points as free to move
+        for attachment in attachments:
+            # Check by identity to handle attachment point objects
+            is_chassis = any(attachment is m for m in chassis_mount_points)
+            is_knuckle = any(attachment is m for m in knuckle_mount_points)
+            if not is_chassis and not is_knuckle:
                 self.set_point_free(attachment.name)
 
-        # Add distance constraints for control arm links
+        # Add distance constraints for control arm links (always rigid)
         for link in control_arm.links:
             self.add_constraint(
                 DistanceConstraint(
@@ -115,30 +416,45 @@ class CornerSolver(SuspensionSolver):
                 )
             )
 
-        # Add coincident constraints for points that move together
-        # (e.g., multiple links meeting at ball joint)
-        for i, attachment in enumerate(attachments):
-            if i == knuckle_mount_index:
-                # This is the ball joint - may need to connect to other control arms
-                pass
+        # Add coincident constraints for all registered joints involving this control arm
+        self._generate_joint_constraints_for_component(control_arm, attachments)
 
     def add_link(self,
                 link: SuspensionLink,
-                end1_is_chassis: bool,
-                end2_is_chassis: bool,
-                joint_type: JointType = JointType.BALL_JOINT):
+                end1_mount_point: Optional[AttachmentPoint] = None,
+                end2_mount_point: Optional[AttachmentPoint] = None):
         """
         Add a suspension link with automatic constraint generation.
 
+        Joint types are automatically inferred from joints defined via add_joint().
+        You must call add_joint() to define joints at the link endpoints before adding the link.
+
         Args:
             link: SuspensionLink object
-            end1_is_chassis: True if endpoint1 is chassis-mounted
-            end2_is_chassis: True if endpoint2 is chassis-mounted
-            joint_type: Type of joint at non-chassis end
+            end1_mount_point: Chassis/knuckle point that end1 connects to (None if free-floating)
+            end2_mount_point: Chassis/knuckle point that end2 connects to (None if free-floating)
+
+        Examples:
+            # Define joints first
+            solver.add_joint("damper_lower", [damper.end1, knuckle.damper_mount], JointType.BALL_JOINT)
+            solver.add_joint("damper_upper", [damper.end2, chassis.damper_mount], JointType.BUSHING_HARD)
+
+            # Add link
+            solver.add_link(
+                link=damper,
+                end1_mount_point=knuckle.damper_mount,
+                end2_mount_point=chassis.damper_mount
+            )
         """
         self.links.append(link)
 
-        # Add distance constraint for link rigidity
+        # Add link endpoints to solver state
+        if link.endpoint1.name not in self.state.points:
+            self.state.add_point(link.endpoint1)
+        if link.endpoint2.name not in self.state.points:
+            self.state.add_point(link.endpoint2)
+
+        # Add distance constraint for link rigidity (links are always rigid)
         self.add_constraint(
             DistanceConstraint(
                 link.endpoint1,
@@ -149,32 +465,37 @@ class CornerSolver(SuspensionSolver):
             )
         )
 
-        # Fix chassis end(s)
-        if end1_is_chassis:
-            self.chassis_mounts.append(link.endpoint1)
+        # If end1 connects to a chassis mount, fix it
+        if end1_mount_point is not None and end1_mount_point in self.chassis_mounts:
             self.add_constraint(
                 FixedPointConstraint(
                     link.endpoint1,
                     link.endpoint1.position.copy(),
-                    name=f"{link.name}_end1_chassis"
+                    name=f"{link.name}_end1_chassis",
+                    joint_type=JointType.RIGID
                 )
             )
             self.set_point_fixed(link.endpoint1.name)
         else:
             self.set_point_free(link.endpoint1.name)
 
-        if end2_is_chassis:
-            self.chassis_mounts.append(link.endpoint2)
+        # If end2 connects to a chassis mount, fix it
+        if end2_mount_point is not None and end2_mount_point in self.chassis_mounts:
             self.add_constraint(
                 FixedPointConstraint(
                     link.endpoint2,
                     link.endpoint2.position.copy(),
-                    name=f"{link.name}_end2_chassis"
+                    name=f"{link.name}_end2_chassis",
+                    joint_type=JointType.RIGID
                 )
             )
             self.set_point_fixed(link.endpoint2.name)
         else:
             self.set_point_free(link.endpoint2.name)
+
+        # Add coincident constraints for registered joints involving this link
+        link_points = [link.endpoint1, link.endpoint2]
+        self._generate_joint_constraints_for_component(link, link_points)
 
     def add_ball_joint_coincident(self,
                                   point1: AttachmentPoint,

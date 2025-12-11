@@ -13,6 +13,7 @@ from pysuspension.corner_solver import CornerSolver
 from pysuspension.suspension_link import SuspensionLink
 from pysuspension.attachment_point import AttachmentPoint
 from pysuspension.suspension_knuckle import SuspensionKnuckle
+from pysuspension.joint_types import JointType
 
 
 def create_simple_suspension():
@@ -55,16 +56,26 @@ def create_simple_suspension():
     # Wheel center (on knuckle, between ball joints)
     wheel_center = AttachmentPoint("wheel_center", [1400, 750, 390], unit='mm')
 
-    # Add links to solver
-    solver.add_link(upper_front_link, end1_is_chassis=True, end2_is_chassis=False)
-    solver.add_link(upper_rear_link, end1_is_chassis=True, end2_is_chassis=False)
-    solver.add_link(lower_front_link, end1_is_chassis=True, end2_is_chassis=False)
-    solver.add_link(lower_rear_link, end1_is_chassis=True, end2_is_chassis=False)
+    # Mark chassis mount points
+    solver.chassis_mounts.extend([
+        upper_front_link.endpoint1,
+        upper_rear_link.endpoint1,
+        lower_front_link.endpoint1,
+        lower_rear_link.endpoint1
+    ])
+
+    # Add control arm links to solver
+    solver.add_link(upper_front_link, end1_mount_point=upper_front_link.endpoint1)
+    solver.add_link(upper_rear_link, end1_mount_point=upper_rear_link.endpoint1)
+    solver.add_link(lower_front_link, end1_mount_point=lower_front_link.endpoint1)
+    solver.add_link(lower_rear_link, end1_mount_point=lower_rear_link.endpoint1)
 
     # Connect wheel center to ball joints (simulates knuckle)
     upper_ball_joint = upper_front_link.endpoint2
     lower_ball_joint = lower_front_link.endpoint2
 
+    # Create and add knuckle links
+    # NOTE: We're NOT using explicit joints here - the geometry alone constrains the system
     upper_to_wheel = SuspensionLink(
         upper_ball_joint,
         wheel_center,
@@ -78,8 +89,8 @@ def create_simple_suspension():
         unit='mm'
     )
 
-    solver.add_link(upper_to_wheel, end1_is_chassis=False, end2_is_chassis=False)
-    solver.add_link(lower_to_wheel, end1_is_chassis=False, end2_is_chassis=False)
+    solver.add_link(upper_to_wheel)
+    solver.add_link(lower_to_wheel)
 
     # Set wheel center
     solver.set_wheel_center(wheel_center)
