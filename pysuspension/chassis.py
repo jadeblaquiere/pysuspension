@@ -570,6 +570,15 @@ class Chassis(RigidBody):
             if hasattr(component, 'endpoint2'):
                 lookup[f"{comp_name}.{component.endpoint2.name}"] = component.endpoint2
 
+            # Handle SteeringRack housing attachment points
+            if hasattr(component, 'housing'):
+                for ap in component.housing.attachment_points:
+                    lookup[f"{component.housing.name}.{ap.name}"] = ap
+            if hasattr(component, 'left_inner_pivot'):
+                lookup[f"{component.name}.{component.left_inner_pivot.name}"] = component.left_inner_pivot
+            if hasattr(component, 'right_inner_pivot'):
+                lookup[f"{component.name}.{component.right_inner_pivot.name}"] = component.right_inner_pivot
+
         # Add chassis corners
         for corner_name, corner in self.corners.items():
             for ap in corner.attachment_points:

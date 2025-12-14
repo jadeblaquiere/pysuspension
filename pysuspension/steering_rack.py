@@ -324,7 +324,7 @@ class SteeringRack:
         if 'housing' in data:
             # New format: housing is a RigidBody
             housing = RigidBody.from_dict(data['housing'])
-            housing_positions = housing.get_all_attachment_positions(unit='mm')
+            housing_positions = housing.get_all_attachment_points()
         else:
             # Old format: housing_attachment_points list
             housing_positions = [ap_data['position'] for ap_data in data['housing_attachment_points']]
@@ -335,8 +335,8 @@ class SteeringRack:
             # New format: inner pivots are AttachmentPoints
             left_inner = AttachmentPoint.from_dict(data['left_inner_pivot'])
             right_inner = AttachmentPoint.from_dict(data['right_inner_pivot'])
-            left_inner_pos = left_inner.position
-            right_inner_pos = right_inner.position
+            left_inner_pos = left_inner.copy()
+            right_inner_pos = right_inner.copy()
         elif 'left_tie_rod' in data and 'right_tie_rod' in data:
             # Old format: extract inner pivots from tie rods (backward compatibility)
             left_tie_rod = SuspensionLink.from_dict(data['left_tie_rod'])

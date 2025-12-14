@@ -307,6 +307,7 @@ class SuspensionKnuckle(RigidBody):
             Dictionary representation suitable for JSON serialization
         """
         return {
+            'name': self.name,
             'tire_center': self.tire_center.tolist(),  # Convert numpy array to list
             'toe_angle': float(np.degrees(self.toe_angle)),  # Store in degrees for readability
             'camber_angle': float(np.degrees(self.camber_angle)),  # Store in degrees
