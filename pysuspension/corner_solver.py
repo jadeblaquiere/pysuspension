@@ -397,29 +397,59 @@ class CornerSolver(SuspensionSolver):
         # Phase 7b: Add coil springs
         print("Adding coil springs...")
         for spring in work_graph.coil_springs:
+            solver.links.append(spring)
+
+            # Add spring endpoints to solver state
+            if spring.endpoint1.name not in solver.state.points:
+                solver.state.add_point(spring.endpoint1)
+            if spring.endpoint2.name not in solver.state.points:
+                solver.state.add_point(spring.endpoint2)
+
             # Determine mount points for this spring
-            end1_mount = None
-            end2_mount = None
+            end1_is_chassis = any(spring.endpoint1 is cp for cp in work_graph.chassis_points)
+            end2_is_chassis = any(spring.endpoint2 is cp for cp in work_graph.chassis_points)
 
-            # Use identity comparison to avoid numpy array comparison issues
-            if any(spring.endpoint1 is cp for cp in work_graph.chassis_points):
-                end1_mount = spring.endpoint1
-            if any(spring.endpoint2 is cp for cp in work_graph.chassis_points):
-                end2_mount = spring.endpoint2
+            # If end1 connects to a chassis mount, fix it
+            if end1_is_chassis:
+                solver.add_constraint(
+                    FixedPointConstraint(
+                        spring.endpoint1,
+                        spring.endpoint1.position.copy(),
+                        name=f"{spring.name}_end1_chassis",
+                        joint_type=JointType.RIGID
+                    )
+                )
+                solver.set_point_fixed(spring.endpoint1.name)
+            else:
+                solver.set_point_free(spring.endpoint1.name)
 
-            # Add coil spring as a link with distance constraint
-            # Springs can compress/extend, so we use the current length as target
-            solver.add_link(
-                spring,
-                end1_mount_point=end1_mount,
-                end2_mount_point=end2_mount
-            )
+            # If end2 connects to a chassis mount, fix it
+            if end2_is_chassis:
+                solver.add_constraint(
+                    FixedPointConstraint(
+                        spring.endpoint2,
+                        spring.endpoint2.position.copy(),
+                        name=f"{spring.name}_end2_chassis",
+                        joint_type=JointType.RIGID
+                    )
+                )
+                solver.set_point_fixed(spring.endpoint2.name)
+            else:
+                solver.set_point_free(spring.endpoint2.name)
+
+            # IMPORTANT: No distance constraint for springs - they can compress/extend!
+            # Spring force is calculated from length change, not enforced as a constraint
+
+            # Add coincident constraints for registered joints involving this spring
+            spring_points = [spring.endpoint1, spring.endpoint2]
+            solver._generate_joint_constraints_for_component(spring, spring_points)
 
         # Phase 7c: Add steering racks
         print("Adding steering racks...")
         for rack in work_graph.steering_racks:
             # Add steering rack housing attachment points as fixed (chassis mounts)
-            for housing_point in rack.housing.get_all_attachment_points():
+            housing_points = rack.housing.get_all_attachment_points()
+            for housing_point in housing_points:
                 solver.chassis_mounts.append(housing_point)
                 # Add to solver state
                 if housing_point.name not in solver.state.points:
@@ -435,12 +465,42 @@ class CornerSolver(SuspensionSolver):
                 )
                 solver.set_point_fixed(housing_point.name)
 
-            # Add inner pivot points to solver state as free points
-            # These will be connected to tie rods via joints
-            for pivot in [rack.left_inner_pivot, rack.right_inner_pivot]:
+            # Add inner pivot points to solver state
+            inner_pivots = [rack.left_inner_pivot, rack.right_inner_pivot]
+            for pivot in inner_pivots:
                 if pivot.name not in solver.state.points:
                     solver.state.add_point(pivot)
                 solver.set_point_free(pivot.name)
+
+            # Add rigid body constraints: inner pivots maintain fixed distances from housing
+            # This makes the steering rack act as a rigid body (housing + pivots move together)
+            # Distance from each inner pivot to each housing point must remain constant
+            for pivot in inner_pivots:
+                for housing_point in housing_points:
+                    distance = np.linalg.norm(pivot.position - housing_point.position)
+                    solver.add_constraint(
+                        DistanceConstraint(
+                            pivot,
+                            housing_point,
+                            target_distance=distance,
+                            name=f"{rack.name}_{pivot.name}_to_{housing_point.name}",
+                            joint_type=JointType.RIGID
+                        )
+                    )
+
+            # Also constrain distance between the two inner pivots (rigid body)
+            rack_length = np.linalg.norm(
+                rack.left_inner_pivot.position - rack.right_inner_pivot.position
+            )
+            solver.add_constraint(
+                DistanceConstraint(
+                    rack.left_inner_pivot,
+                    rack.right_inner_pivot,
+                    target_distance=rack_length,
+                    name=f"{rack.name}_rack_length",
+                    joint_type=JointType.RIGID
+                )
+            )
 
         # Phase 8: Set wheel center
         if wheel_center_point is not None:
