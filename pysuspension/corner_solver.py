@@ -11,8 +11,11 @@ Requirements:
 """
 
 import numpy as np
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, TYPE_CHECKING
 from .solver import SuspensionSolver, SolverResult
+
+if TYPE_CHECKING:
+    from .suspension_knuckle import SuspensionKnuckle
 from .constraints import (
     DistanceConstraint,
     FixedPointConstraint,
@@ -67,6 +70,12 @@ class CornerSolver(SuspensionSolver):
 
         # Initial state for resetting
         self._initial_snapshot = None
+
+        # Model integration (for from_suspension_knuckle)
+        self.original_knuckle: Optional['SuspensionKnuckle'] = None
+        self.copied_knuckle: Optional['SuspensionKnuckle'] = None
+        self.component_mapping: Dict = {}  # original_id -> copy
+        self.reverse_mapping: Dict = {}    # copy_id -> original
 
     def add_joint(self,
                  name: str,
@@ -230,6 +239,187 @@ class CornerSolver(SuspensionSolver):
             List of joint names
         """
         return list(self.joints.keys())
+
+    @classmethod
+    def from_suspension_knuckle(cls,
+                                knuckle: 'SuspensionKnuckle',
+                                wheel_center_point: Optional[AttachmentPoint] = None,
+                                name: str = "corner_solver",
+                                copy_components: bool = True) -> 'CornerSolver':
+        """
+        Create a CornerSolver from a suspension knuckle.
+
+        This method automatically discovers all connected components by traversing
+        from the knuckle through joints and attachment points to find control arms,
+        links, and chassis mount points. It then configures the solver with the
+        discovered geometry.
+
+        The discovery process:
+        1. Discovers all connected components via graph traversal
+        2. Creates working copies of all components (if copy_components=True)
+        3. Configures solver with discovered geometry
+        4. Fixes chassis attachment points
+        5. Sets up all joints and constraints
+
+        Args:
+            knuckle: SuspensionKnuckle to build solver from
+            wheel_center_point: Optional specific point to use as wheel center.
+                              If None, creates point from knuckle.tire_center
+            name: Name for the solver (default: "corner_solver")
+            copy_components: If True, creates copies of all components; if False,
+                           uses originals (default: True). Using copies is safer
+                           as it leaves original components unchanged.
+
+        Returns:
+            Configured CornerSolver ready for solving
+
+        Raises:
+            ValueError: If knuckle has no attachment points or invalid configuration
+
+        Example:
+            >>> from pysuspension import SuspensionKnuckle, CornerSolver
+            >>> knuckle = SuspensionKnuckle(...)
+            >>> # ... set up control arms, links, joints ...
+            >>> solver = CornerSolver.from_suspension_knuckle(knuckle)
+            >>> result = solver.solve_for_heave(25, unit='mm')
+            >>> # Original knuckle unchanged, solver has copies
+            >>> solved_knuckle = solver.get_solved_knuckle()
+        """
+        from .suspension_graph import discover_suspension_graph, create_working_copies
+
+        # Phase 1: Discover the suspension graph
+        print(f"Discovering suspension graph from knuckle '{knuckle.name}'...")
+        graph = discover_suspension_graph(knuckle)
+
+        print(f"  Found {len(graph.control_arms)} control arms")
+        print(f"  Found {len(graph.links)} standalone links")
+        print(f"  Found {len(graph.joints)} joints")
+        print(f"  Found {len(graph.chassis_points)} chassis mount points")
+
+        # Phase 2: Create working copies if requested
+        if copy_components:
+            print("Creating working copies of components...")
+            copied_graph, mapping = create_working_copies(graph)
+            work_graph = copied_graph
+            original_knuckle = knuckle
+            work_knuckle = copied_graph.knuckle
+        else:
+            print("Using original components (no copying)...")
+            work_graph = graph
+            mapping = {}
+            original_knuckle = knuckle
+            work_knuckle = knuckle
+
+        # Phase 3: Create the solver instance
+        print(f"Configuring CornerSolver '{name}'...")
+        solver = cls(name=name)
+
+        # Store references
+        solver.original_knuckle = original_knuckle
+        solver.copied_knuckle = work_knuckle
+        solver.component_mapping = mapping
+        solver.reverse_mapping = {id(v): k for k, v in mapping.items()}
+
+        # Phase 4: Register all joints
+        print("Registering joints...")
+        for joint_name, joint in work_graph.joints.items():
+            solver.joints[joint_name] = joint
+
+        # Phase 5: Add chassis mounts as fixed points
+        print("Setting up chassis mount constraints...")
+        for chassis_point in work_graph.chassis_points:
+            solver.chassis_mounts.append(chassis_point)
+            # Add to solver state
+            if chassis_point.name not in solver.state.points:
+                solver.state.add_point(chassis_point)
+            # Add fixed constraint
+            solver.add_constraint(
+                FixedPointConstraint(
+                    chassis_point,
+                    chassis_point.position.copy(),
+                    name=f"chassis_{chassis_point.name}",
+                    joint_type=JointType.RIGID
+                )
+            )
+            solver.set_point_fixed(chassis_point.name)
+
+        # Phase 6: Add all control arms
+        print("Adding control arms...")
+        for control_arm in work_graph.control_arms:
+            # Determine which points are chassis mounts
+            chassis_mount_points = []
+            knuckle_mount_points = []
+
+            # Check each attachment point in the control arm
+            all_arm_points = []
+            for link in control_arm.links:
+                if link.endpoint1 not in all_arm_points:
+                    all_arm_points.append(link.endpoint1)
+                if link.endpoint2 not in all_arm_points:
+                    all_arm_points.append(link.endpoint2)
+            for ap in control_arm.attachment_points:
+                if ap not in all_arm_points:
+                    all_arm_points.append(ap)
+
+            for point in all_arm_points:
+                if point in work_graph.chassis_points:
+                    chassis_mount_points.append(point)
+                elif point in work_graph.knuckle_points:
+                    knuckle_mount_points.append(point)
+
+            solver.add_control_arm(
+                control_arm,
+                chassis_mount_points=chassis_mount_points,
+                knuckle_mount_points=knuckle_mount_points
+            )
+
+        # Phase 7: Add standalone links
+        print("Adding standalone links...")
+        for link in work_graph.links:
+            # Determine mount points for this link
+            end1_mount = None
+            end2_mount = None
+
+            if link.endpoint1 in work_graph.chassis_points:
+                end1_mount = link.endpoint1
+            if link.endpoint2 in work_graph.chassis_points:
+                end2_mount = link.endpoint2
+
+            solver.add_link(
+                link,
+                end1_mount_point=end1_mount,
+                end2_mount_point=end2_mount
+            )
+
+        # Phase 8: Set wheel center
+        if wheel_center_point is not None:
+            # Use the provided wheel center point
+            # If it was copied, find the copy
+            if copy_components and id(wheel_center_point) in mapping:
+                solver.wheel_center = mapping[id(wheel_center_point)]
+            else:
+                solver.wheel_center = wheel_center_point
+        else:
+            # Create wheel center point from knuckle tire center
+            wheel_center = AttachmentPoint(
+                name=f"{work_knuckle.name}_wheel_center",
+                position=work_knuckle.tire_center.copy(),
+                unit='mm',
+                parent_component=work_knuckle
+            )
+            # Add to solver state
+            solver.state.add_point(wheel_center)
+            solver.set_point_free(wheel_center.name)
+            solver.wheel_center = wheel_center
+
+        # Store knuckle points
+        solver.knuckle_points = list(work_graph.knuckle_points)
+
+        print(f"✓ CornerSolver configured successfully")
+        print(f"  Total DOF: {solver.state.get_dof()}")
+        print(f"  Total constraints: {len(solver.constraints)}")
+
+        return solver
 
     def _generate_joint_constraints_for_component(self,
                                                    component,
@@ -897,6 +1087,139 @@ class CornerSolver(SuspensionSolver):
     def save_initial_state(self):
         """Save current state as initial configuration."""
         self._initial_snapshot = self.get_state_snapshot()
+
+    def solve_for_knuckle_heave(self,
+                               displacement: float,
+                               unit: str = 'mm',
+                               initial_guess: Optional[np.ndarray] = None) -> SolverResult:
+        """
+        Solve for suspension position with knuckle heaved vertically.
+
+        This is similar to solve_for_heave() but specifically works with the
+        knuckle's tire center position when the solver was created from a
+        SuspensionKnuckle using from_suspension_knuckle().
+
+        Args:
+            displacement: Vertical displacement from current knuckle position
+            unit: Unit of displacement (default: 'mm')
+            initial_guess: Initial guess for solver
+
+        Returns:
+            SolverResult with new positions in copied components
+
+        Raises:
+            ValueError: If solver was not created from a knuckle
+
+        Example:
+            >>> solver = CornerSolver.from_suspension_knuckle(knuckle)
+            >>> result = solver.solve_for_knuckle_heave(25, unit='mm')
+            >>> solved_knuckle = solver.get_solved_knuckle()
+        """
+        if self.copied_knuckle is None:
+            raise ValueError(
+                "solve_for_knuckle_heave() requires solver to be created from a knuckle. "
+                "Use from_suspension_knuckle() or use solve_for_heave() instead."
+            )
+
+        # Use the standard solve_for_heave with the wheel center
+        return self.solve_for_heave(displacement, unit=unit, initial_guess=initial_guess)
+
+    def get_solved_knuckle(self) -> 'SuspensionKnuckle':
+        """
+        Get the solved knuckle with updated position/orientation.
+
+        Returns the copied knuckle (if solver was created with copy_components=True)
+        with positions updated from solving. The original knuckle remains unchanged.
+
+        Returns:
+            SuspensionKnuckle with solved positions
+
+        Raises:
+            ValueError: If solver was not created from a knuckle
+
+        Example:
+            >>> solver = CornerSolver.from_suspension_knuckle(knuckle)
+            >>> result = solver.solve_for_heave(25, unit='mm')
+            >>> solved_knuckle = solver.get_solved_knuckle()
+            >>> print(f"New tire center: {solved_knuckle.tire_center}")
+        """
+        if self.copied_knuckle is None:
+            raise ValueError(
+                "get_solved_knuckle() requires solver to be created from a knuckle. "
+                "Use from_suspension_knuckle() first."
+            )
+
+        return self.copied_knuckle
+
+    def update_original_from_solved(self) -> None:
+        """
+        Update original components with solved positions from copies.
+
+        WARNING: This modifies the original suspension model!
+        Use with caution. This is only available if the solver was created
+        with copy_components=True.
+
+        Updates:
+        - Original knuckle position and orientation
+        - Original control arm positions
+        - Original link endpoint positions
+
+        Raises:
+            ValueError: If solver was not created from a knuckle or no copies exist
+
+        Example:
+            >>> solver = CornerSolver.from_suspension_knuckle(knuckle, copy_components=True)
+            >>> result = solver.solve_for_heave(25, unit='mm')
+            >>> # Original still unchanged
+            >>> solver.update_original_from_solved()
+            >>> # Now original knuckle has new positions
+        """
+        if self.original_knuckle is None or self.copied_knuckle is None:
+            raise ValueError(
+                "update_original_from_solved() requires solver to be created from a knuckle. "
+                "Use from_suspension_knuckle() first."
+            )
+
+        if not self.component_mapping:
+            raise ValueError(
+                "No component mapping available. "
+                "Solver must be created with copy_components=True."
+            )
+
+        # Update original knuckle from copied knuckle
+        self.original_knuckle.tire_center = self.copied_knuckle.tire_center.copy()
+        self.original_knuckle.toe_angle = self.copied_knuckle.toe_angle
+        self.original_knuckle.camber_angle = self.copied_knuckle.camber_angle
+        self.original_knuckle.rotation_matrix = self.copied_knuckle.rotation_matrix.copy()
+
+        # Update attachment point positions
+        for orig_ap, copy_ap in zip(self.original_knuckle.attachment_points,
+                                    self.copied_knuckle.attachment_points):
+            orig_ap.set_position(copy_ap.position.copy(), unit='mm')
+
+        # Update control arms
+        for control_arm_copy in self.control_arms:
+            # Find original control arm using reverse mapping
+            orig_id = self.reverse_mapping.get(id(control_arm_copy))
+            if orig_id is not None:
+                # Find original in component_mapping
+                orig_arm = self.component_mapping.get(orig_id)
+                if orig_arm is not None:
+                    # Update link endpoints
+                    for orig_link, copy_link in zip(orig_arm.links, control_arm_copy.links):
+                        orig_link.endpoint1.set_position(copy_link.endpoint1.position.copy(), unit='mm')
+                        orig_link.endpoint2.set_position(copy_link.endpoint2.position.copy(), unit='mm')
+                        orig_link._update_local_frame()
+
+        # Update standalone links
+        for link_copy in self.links:
+            orig_id = self.reverse_mapping.get(id(link_copy))
+            if orig_id is not None:
+                orig_link = self.component_mapping.get(orig_id)
+                if orig_link is not None:
+                    orig_link.endpoint1.set_position(link_copy.endpoint1.position.copy(), unit='mm')
+                    orig_link.endpoint2.set_position(link_copy.endpoint2.position.copy(), unit='mm')
+                    orig_link._update_local_frame()
 
     def __repr__(self) -> str:
         return (f"CornerSolver('{self.name}', "
