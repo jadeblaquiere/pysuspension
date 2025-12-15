@@ -40,6 +40,11 @@ class ControlArm(RigidBody):
         """
         self.links.append(link)
 
+        # Update parent_component of link endpoints to point to this control arm
+        # This allows graph discovery to find control arms instead of standalone links
+        link.endpoint1.parent_component = self
+        link.endpoint2.parent_component = self
+
         # Store original endpoint positions
         if not self._original_state_frozen:
             self._original_link_endpoints.append((
