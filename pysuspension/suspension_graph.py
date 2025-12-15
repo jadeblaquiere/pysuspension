@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     from .suspension_knuckle import SuspensionKnuckle
     from .control_arm import ControlArm
     from .suspension_link import SuspensionLink
+    from .coil_spring import CoilSpring
+    from .steering_rack import SteeringRack
     from .suspension_joint import SuspensionJoint
     from .attachment_point import AttachmentPoint
     from .chassis_corner import ChassisCorner
@@ -30,7 +32,9 @@ class SuspensionGraph:
     Attributes:
         knuckle: The starting SuspensionKnuckle
         control_arms: List of discovered ControlArm components
-        links: List of discovered SuspensionLink components
+        links: List of discovered SuspensionLink components (excluding CoilSpring)
+        coil_springs: List of discovered CoilSpring components
+        steering_racks: List of discovered SteeringRack components
         joints: Dict of discovered SuspensionJoint objects (name -> joint)
         chassis_points: List of ChassisCorner attachment points (to be fixed)
         knuckle_points: List of attachment points on the knuckle
@@ -40,6 +44,8 @@ class SuspensionGraph:
     knuckle: 'SuspensionKnuckle'
     control_arms: List['ControlArm'] = field(default_factory=list)
     links: List['SuspensionLink'] = field(default_factory=list)
+    coil_springs: List['CoilSpring'] = field(default_factory=list)
+    steering_racks: List['SteeringRack'] = field(default_factory=list)
     joints: Dict[str, 'SuspensionJoint'] = field(default_factory=dict)
     chassis_points: List['AttachmentPoint'] = field(default_factory=list)
     knuckle_points: List['AttachmentPoint'] = field(default_factory=list)
@@ -86,6 +92,8 @@ def discover_suspension_graph(knuckle: 'SuspensionKnuckle') -> SuspensionGraph:
     from .chassis_corner import ChassisCorner
     from .control_arm import ControlArm
     from .suspension_link import SuspensionLink
+    from .coil_spring import CoilSpring
+    from .steering_rack import SteeringRack
 
     if not knuckle.attachment_points:
         raise ValueError(f"Knuckle '{knuckle.name}' has no attachment points")
@@ -178,6 +186,25 @@ def discover_suspension_graph(knuckle: 'SuspensionKnuckle') -> SuspensionGraph:
                                 graph.component_map[id(ap)] = parent
                                 visited_points.add(id(ap))
 
+                elif isinstance(parent, CoilSpring):
+                    # Found a coil spring (must check before SuspensionLink since CoilSpring extends it)
+                    component_id = id(parent)
+                    if component_id not in visited_components:
+                        graph.coil_springs.append(parent)
+                        visited_components.add(component_id)
+
+                        # Add both endpoints to queue
+                        if id(parent.endpoint1) not in visited_points:
+                            queue.append(parent.endpoint1)
+                            graph.all_attachment_points.append(parent.endpoint1)
+                            graph.component_map[id(parent.endpoint1)] = parent
+                            visited_points.add(id(parent.endpoint1))
+                        if id(parent.endpoint2) not in visited_points:
+                            queue.append(parent.endpoint2)
+                            graph.all_attachment_points.append(parent.endpoint2)
+                            graph.component_map[id(parent.endpoint2)] = parent
+                            visited_points.add(id(parent.endpoint2))
+
                 elif isinstance(parent, SuspensionLink):
                     # Found a standalone suspension link
                     component_id = id(parent)
@@ -196,6 +223,27 @@ def discover_suspension_graph(knuckle: 'SuspensionKnuckle') -> SuspensionGraph:
                             graph.all_attachment_points.append(parent.endpoint2)
                             graph.component_map[id(parent.endpoint2)] = parent
                             visited_points.add(id(parent.endpoint2))
+
+                elif isinstance(parent, SteeringRack):
+                    # Found a steering rack
+                    component_id = id(parent)
+                    if component_id not in visited_components:
+                        graph.steering_racks.append(parent)
+                        visited_components.add(component_id)
+
+                        # Add inner pivot points to queue (left and right)
+                        # The housing attachment points belong to the housing RigidBody,
+                        # not the SteeringRack itself, so we only handle the inner pivots
+                        if id(parent.left_inner_pivot) not in visited_points:
+                            queue.append(parent.left_inner_pivot)
+                            graph.all_attachment_points.append(parent.left_inner_pivot)
+                            graph.component_map[id(parent.left_inner_pivot)] = parent
+                            visited_points.add(id(parent.left_inner_pivot))
+                        if id(parent.right_inner_pivot) not in visited_points:
+                            queue.append(parent.right_inner_pivot)
+                            graph.all_attachment_points.append(parent.right_inner_pivot)
+                            graph.component_map[id(parent.right_inner_pivot)] = parent
+                            visited_points.add(id(parent.right_inner_pivot))
 
                 else:
                     # Unknown component type - just track the point
@@ -346,6 +394,31 @@ def create_working_copies(graph: SuspensionGraph) -> tuple[SuspensionGraph, Dict
         mapping[id(link.endpoint1)] = link_copy.endpoint1
         mapping[id(link.endpoint2)] = link_copy.endpoint2
 
+    # Copy all coil springs
+    coil_springs_copy = []
+    for spring in graph.coil_springs:
+        spring_copy = spring.copy(copy_joints=False)
+        coil_springs_copy.append(spring_copy)
+        mapping[id(spring)] = spring_copy
+        mapping[id(spring.endpoint1)] = spring_copy.endpoint1
+        mapping[id(spring.endpoint2)] = spring_copy.endpoint2
+
+    # Copy all steering racks
+    steering_racks_copy = []
+    for rack in graph.steering_racks:
+        rack_copy = rack.copy(copy_joints=False)
+        steering_racks_copy.append(rack_copy)
+        mapping[id(rack)] = rack_copy
+
+        # Map steering rack points
+        mapping[id(rack.left_inner_pivot)] = rack_copy.left_inner_pivot
+        mapping[id(rack.right_inner_pivot)] = rack_copy.right_inner_pivot
+
+        # Map housing attachment points
+        for orig_ap, copy_ap in zip(rack.housing.get_all_attachment_points(),
+                                     rack_copy.housing.get_all_attachment_points()):
+            mapping[id(orig_ap)] = copy_ap
+
     # Copy chassis attachment points (these are just references, not new objects)
     # Chassis points should remain as references to the original chassis
     # OR we can create simple copies
@@ -407,6 +480,8 @@ def create_working_copies(graph: SuspensionGraph) -> tuple[SuspensionGraph, Dict
         knuckle=knuckle_copy,
         control_arms=control_arms_copy,
         links=links_copy,
+        coil_springs=coil_springs_copy,
+        steering_racks=steering_racks_copy,
         joints=joints_copy,
         chassis_points=chassis_points_copy,
         knuckle_points=[mapping[id(p)] for p in graph.knuckle_points if id(p) in mapping],
