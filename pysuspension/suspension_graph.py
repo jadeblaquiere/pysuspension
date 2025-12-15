@@ -241,7 +241,8 @@ def validate_suspension_graph(graph: SuspensionGraph) -> Dict[str, any]:
     # Check that all points have parent components
     orphan_points = []
     for point in graph.all_attachment_points:
-        if point.parent_component is None and point not in graph.knuckle_points:
+        # Use identity comparison to avoid numpy array comparison issues
+        if point.parent_component is None and not any(point is kp for kp in graph.knuckle_points):
             orphan_points.append(point.name)
 
     if orphan_points:
@@ -250,7 +251,8 @@ def validate_suspension_graph(graph: SuspensionGraph) -> Dict[str, any]:
     # Check that all non-chassis points have joints
     unjoint_points = []
     for point in graph.all_attachment_points:
-        if point not in graph.chassis_points and point.joint is None:
+        # Use identity comparison to avoid numpy array comparison issues
+        if not any(point is cp for cp in graph.chassis_points) and point.joint is None:
             # Some points might not have joints if they're internal to a component
             # This is just a warning, not an error
             unjoint_points.append(point.name)

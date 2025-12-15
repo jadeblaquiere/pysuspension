@@ -353,18 +353,20 @@ class CornerSolver(SuspensionSolver):
             # Check each attachment point in the control arm
             all_arm_points = []
             for link in control_arm.links:
-                if link.endpoint1 not in all_arm_points:
+                # Use identity comparison to avoid numpy array comparison issues
+                if not any(link.endpoint1 is p for p in all_arm_points):
                     all_arm_points.append(link.endpoint1)
-                if link.endpoint2 not in all_arm_points:
+                if not any(link.endpoint2 is p for p in all_arm_points):
                     all_arm_points.append(link.endpoint2)
             for ap in control_arm.attachment_points:
-                if ap not in all_arm_points:
+                if not any(ap is p for p in all_arm_points):
                     all_arm_points.append(ap)
 
             for point in all_arm_points:
-                if point in work_graph.chassis_points:
+                # Use identity comparison to avoid numpy array comparison issues
+                if any(point is cp for cp in work_graph.chassis_points):
                     chassis_mount_points.append(point)
-                elif point in work_graph.knuckle_points:
+                elif any(point is kp for kp in work_graph.knuckle_points):
                     knuckle_mount_points.append(point)
 
             solver.add_control_arm(
@@ -380,9 +382,10 @@ class CornerSolver(SuspensionSolver):
             end1_mount = None
             end2_mount = None
 
-            if link.endpoint1 in work_graph.chassis_points:
+            # Use identity comparison to avoid numpy array comparison issues
+            if any(link.endpoint1 is cp for cp in work_graph.chassis_points):
                 end1_mount = link.endpoint1
-            if link.endpoint2 in work_graph.chassis_points:
+            if any(link.endpoint2 is cp for cp in work_graph.chassis_points):
                 end2_mount = link.endpoint2
 
             solver.add_link(
@@ -419,21 +422,36 @@ class CornerSolver(SuspensionSolver):
                 solver.state.add_point(knuckle_point)
             solver.set_point_free(knuckle_point.name)
 
-        # Add distance constraints to maintain knuckle as rigid body
-        # This connects the wheel center to the ball joint attachment points
-        if solver.wheel_center is not None:
-            for knuckle_point in work_graph.knuckle_points:
-                # Calculate distance from wheel center to this knuckle point
-                distance = np.linalg.norm(solver.wheel_center.position - knuckle_point.position)
-                solver.add_constraint(
-                    DistanceConstraint(
-                        solver.wheel_center,
-                        knuckle_point,
-                        target_distance=distance,
-                        name=f"knuckle_rigid_{knuckle_point.name}",
-                        joint_type=JointType.RIGID
+        # Add distance constraints between knuckle points to maintain knuckle as rigid body
+        # This allows knuckle points to move with control arms while maintaining relative positions
+        if len(solver.knuckle_points) >= 2:
+            for i, kp1 in enumerate(solver.knuckle_points):
+                for kp2 in solver.knuckle_points[i+1:]:
+                    distance = np.linalg.norm(kp1.position - kp2.position)
+                    solver.add_constraint(
+                        DistanceConstraint(
+                            kp1,
+                            kp2,
+                            target_distance=distance,
+                            name=f"knuckle_rigid_{kp1.name}_{kp2.name}",
+                            joint_type=JointType.RIGID
+                        )
                     )
+
+        # Also add distance constraint from wheel_center to one knuckle point
+        # This links the wheel_center movement to the knuckle
+        if solver.wheel_center is not None and solver.knuckle_points:
+            ref_point = solver.knuckle_points[0]  # Use first knuckle point as reference
+            distance = np.linalg.norm(solver.wheel_center.position - ref_point.position)
+            solver.add_constraint(
+                DistanceConstraint(
+                    solver.wheel_center,
+                    ref_point,
+                    target_distance=distance,
+                    name=f"wheel_to_knuckle",
+                    joint_type=JointType.RIGID
                 )
+            )
 
         print(f"✓ CornerSolver configured successfully")
         print(f"  Total DOF: {solver.state.get_dof()}")
@@ -1147,11 +1165,8 @@ class CornerSolver(SuspensionSolver):
             )
 
         # Use the standard solve_for_heave with the wheel center
+        # Note: solve_for_heave will update wheel_center and copied_knuckle.tire_center
         result = self.solve_for_heave(displacement, unit=unit, initial_guess=initial_guess)
-
-        # Update copied knuckle tire_center from solved wheel_center position
-        if self.wheel_center is not None:
-            self.copied_knuckle.tire_center = self.wheel_center.position.copy()
 
         return result
 
