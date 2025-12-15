@@ -412,8 +412,28 @@ class CornerSolver(SuspensionSolver):
             solver.set_point_free(wheel_center.name)
             solver.wheel_center = wheel_center
 
-        # Store knuckle points
+        # Store knuckle points and add them to solver state
         solver.knuckle_points = list(work_graph.knuckle_points)
+        for knuckle_point in work_graph.knuckle_points:
+            if knuckle_point.name not in solver.state.points:
+                solver.state.add_point(knuckle_point)
+            solver.set_point_free(knuckle_point.name)
+
+        # Add distance constraints to maintain knuckle as rigid body
+        # This connects the wheel center to the ball joint attachment points
+        if solver.wheel_center is not None:
+            for knuckle_point in work_graph.knuckle_points:
+                # Calculate distance from wheel center to this knuckle point
+                distance = np.linalg.norm(solver.wheel_center.position - knuckle_point.position)
+                solver.add_constraint(
+                    DistanceConstraint(
+                        solver.wheel_center,
+                        knuckle_point,
+                        target_distance=distance,
+                        name=f"knuckle_rigid_{knuckle_point.name}",
+                        joint_type=JointType.RIGID
+                    )
+                )
 
         print(f"✓ CornerSolver configured successfully")
         print(f"  Total DOF: {solver.state.get_dof()}")
@@ -759,6 +779,11 @@ class CornerSolver(SuspensionSolver):
         try:
             # Solve
             result = self.solve(initial_guess=initial_guess)
+
+            # Update copied knuckle tire_center if it exists
+            if self.copied_knuckle is not None and self.wheel_center is not None:
+                self.copied_knuckle.tire_center = self.wheel_center.position.copy()
+
             return result
         finally:
             # Remove temporary constraint
@@ -1122,7 +1147,13 @@ class CornerSolver(SuspensionSolver):
             )
 
         # Use the standard solve_for_heave with the wheel center
-        return self.solve_for_heave(displacement, unit=unit, initial_guess=initial_guess)
+        result = self.solve_for_heave(displacement, unit=unit, initial_guess=initial_guess)
+
+        # Update copied knuckle tire_center from solved wheel_center position
+        if self.wheel_center is not None:
+            self.copied_knuckle.tire_center = self.wheel_center.position.copy()
+
+        return result
 
     def get_solved_knuckle(self) -> 'SuspensionKnuckle':
         """
@@ -1186,8 +1217,12 @@ class CornerSolver(SuspensionSolver):
                 "Solver must be created with copy_components=True."
             )
 
-        # Update original knuckle from copied knuckle
-        self.original_knuckle.tire_center = self.copied_knuckle.tire_center.copy()
+        # Update original knuckle from solved state
+        # Get the solved wheel center position and update the knuckle's tire_center
+        if self.wheel_center is not None:
+            self.original_knuckle.tire_center = self.wheel_center.position.copy()
+            self.copied_knuckle.tire_center = self.wheel_center.position.copy()
+
         self.original_knuckle.toe_angle = self.copied_knuckle.toe_angle
         self.original_knuckle.camber_angle = self.copied_knuckle.camber_angle
         self.original_knuckle.rotation_matrix = self.copied_knuckle.rotation_matrix.copy()
