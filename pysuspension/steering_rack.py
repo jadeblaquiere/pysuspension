@@ -260,6 +260,42 @@ class SteeringRack:
         """
         return self.current_angle
 
+    def copy(self, copy_joints: bool = False) -> 'SteeringRack':
+        """
+        Create a copy of the steering rack.
+
+        Args:
+            copy_joints: If True, copy joint references; if False, set joints to None
+
+        Returns:
+            New SteeringRack instance with copied housing and inner pivots
+        """
+        # Copy housing attachment points
+        housing_attachments_copy = []
+        for ap in self.housing.get_all_attachment_points():
+            ap_copy = ap.copy(copy_joint=copy_joints, copy_parent=False)
+            housing_attachments_copy.append(ap_copy)
+
+        # Copy inner pivot points
+        left_inner_copy = self.left_inner_pivot.copy(copy_joint=copy_joints, copy_parent=False)
+        right_inner_copy = self.right_inner_pivot.copy(copy_joint=copy_joints, copy_parent=False)
+
+        # Create new steering rack
+        rack_copy = SteeringRack(
+            housing_attachments=housing_attachments_copy,
+            left_inner_pivot=left_inner_copy,
+            right_inner_pivot=right_inner_copy,
+            travel_per_rotation=self.travel_per_rotation,
+            max_displacement=self.max_displacement,
+            name=self.name,
+            unit='mm'
+        )
+
+        # Copy current state
+        rack_copy.set_turn_angle(self.current_angle)
+
+        return rack_copy
+
     def reset_to_origin(self) -> None:
         """
         Reset the steering rack to its originally defined position.

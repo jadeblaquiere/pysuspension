@@ -394,6 +394,54 @@ class CornerSolver(SuspensionSolver):
                 end2_mount_point=end2_mount
             )
 
+        # Phase 7b: Add coil springs
+        print("Adding coil springs...")
+        for spring in work_graph.coil_springs:
+            # Determine mount points for this spring
+            end1_mount = None
+            end2_mount = None
+
+            # Use identity comparison to avoid numpy array comparison issues
+            if any(spring.endpoint1 is cp for cp in work_graph.chassis_points):
+                end1_mount = spring.endpoint1
+            if any(spring.endpoint2 is cp for cp in work_graph.chassis_points):
+                end2_mount = spring.endpoint2
+
+            # Add coil spring as a link with distance constraint
+            # Springs can compress/extend, so we use the current length as target
+            solver.add_link(
+                spring,
+                end1_mount_point=end1_mount,
+                end2_mount_point=end2_mount
+            )
+
+        # Phase 7c: Add steering racks
+        print("Adding steering racks...")
+        for rack in work_graph.steering_racks:
+            # Add steering rack housing attachment points as fixed (chassis mounts)
+            for housing_point in rack.housing.get_all_attachment_points():
+                solver.chassis_mounts.append(housing_point)
+                # Add to solver state
+                if housing_point.name not in solver.state.points:
+                    solver.state.add_point(housing_point)
+                # Add fixed constraint
+                solver.add_constraint(
+                    FixedPointConstraint(
+                        housing_point,
+                        housing_point.position.copy(),
+                        name=f"rack_housing_{housing_point.name}",
+                        joint_type=JointType.RIGID
+                    )
+                )
+                solver.set_point_fixed(housing_point.name)
+
+            # Add inner pivot points to solver state as free points
+            # These will be connected to tie rods via joints
+            for pivot in [rack.left_inner_pivot, rack.right_inner_pivot]:
+                if pivot.name not in solver.state.points:
+                    solver.state.add_point(pivot)
+                solver.set_point_free(pivot.name)
+
         # Phase 8: Set wheel center
         if wheel_center_point is not None:
             # Use the provided wheel center point

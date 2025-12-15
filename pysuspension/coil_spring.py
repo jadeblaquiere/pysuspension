@@ -365,6 +365,37 @@ class CoilSpring(SuspensionLink):
         else:
             raise ValueError(f"Unknown force unit '{to_unit}'")
 
+    def copy(self, copy_joints: bool = False) -> 'CoilSpring':
+        """
+        Create a copy of the coil spring.
+
+        Args:
+            copy_joints: If True, copy joint references; if False, set joints to None
+
+        Returns:
+            New CoilSpring instance with copied endpoints and properties
+        """
+        # Copy endpoints (joints are copied based on copy_joints parameter)
+        endpoint1_copy = self.endpoint1.copy(copy_joint=copy_joints, copy_parent=False)
+        endpoint2_copy = self.endpoint2.copy(copy_joint=copy_joints, copy_parent=False)
+
+        # Create new spring with copied properties
+        spring_copy = CoilSpring(
+            endpoint1=endpoint1_copy,
+            endpoint2=endpoint2_copy,
+            spring_rate=self.spring_rate,
+            preload_force=self.preload_force,
+            mass=self.mass,
+            name=self.name,
+            unit='mm',
+            spring_rate_unit='kg/mm',
+            force_unit='N',
+            mass_unit='kg',
+            allow_tension=self.allow_tension
+        )
+
+        return spring_copy
+
     def reset_to_origin(self) -> None:
         """
         Reset the spring to its originally defined position.
