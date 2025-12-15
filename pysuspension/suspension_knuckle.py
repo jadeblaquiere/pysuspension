@@ -60,6 +60,9 @@ class SuspensionKnuckle(RigidBody):
 
         # Tire center position (absolute, in mm)
         self.tire_center = np.array([tire_center_x_mm, tire_center_y_mm, rolling_radius_mm], dtype=float)
+        
+        # Rolling radius
+        self.rolling_radius_mm = rolling_radius_mm
 
         # Angular orientation (store in radians internally)
         self.toe_angle = np.radians(toe_angle)
@@ -203,8 +206,8 @@ class SuspensionKnuckle(RigidBody):
 
         # Calculate contact patch position
         # Start at tire center, move rolling_radius distance in the perpendicular direction
-        rolling_radius_mm = self.tire_center[2]  # Stored as Z coordinate of tire center
-        contact = self.tire_center + rolling_radius_mm * direction
+        #rolling_radius_mm = self.tire_center[2]  # Stored as Z coordinate of tire center
+        contact = self.tire_center + ( self.rolling_radius_mm * direction )
 
         return from_mm(contact, unit)
     
@@ -346,6 +349,9 @@ class SuspensionKnuckle(RigidBody):
         knuckle_copy.rotation_matrix = self.rotation_matrix.copy()
         knuckle_copy.centroid = self.centroid.copy() if self.centroid is not None else None
         knuckle_copy.center_of_mass = self.center_of_mass.copy() if self.center_of_mass is not None else None
+        
+        # Copy rolling_radius
+        knuckle_copy.rolling_radius_mm = self.rolling_radius_mm
 
         return knuckle_copy
 
