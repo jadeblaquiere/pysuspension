@@ -299,6 +299,56 @@ class SuspensionKnuckle(RigidBody):
         # Recompute rotation matrix from toe and camber
         self._update_geometry()
 
+    def copy(self, copy_joints: bool = False) -> 'SuspensionKnuckle':
+        """
+        Create a deep copy of this suspension knuckle.
+
+        Creates a new SuspensionKnuckle with the same geometry, tire properties,
+        and attachment points. The copied knuckle will be completely independent.
+
+        Args:
+            copy_joints: If True, preserves joint references on copied attachment points.
+                        If False, copied points have no joint connections (default).
+
+        Returns:
+            New SuspensionKnuckle instance with copied properties and attachment points
+
+        Note:
+            The copy will have the same tire_center, toe_angle, camber_angle,
+            wheel_offset, mass, and rotation_matrix as the original.
+        """
+        # Create new knuckle with same tire geometry
+        knuckle_copy = SuspensionKnuckle(
+            tire_center_x=self.tire_center[0],
+            tire_center_y=self.tire_center[1],
+            rolling_radius=self.tire_center[2],
+            toe_angle=np.degrees(self.toe_angle),
+            camber_angle=np.degrees(self.camber_angle),
+            wheel_offset=self.wheel_offset,
+            mass=self.mass,
+            unit='mm',
+            mass_unit='kg',
+            name=self.name
+        )
+
+        # Copy all attachment points
+        for ap in self.attachment_points:
+            ap_copy = AttachmentPoint(
+                name=ap.name,
+                position=ap.position.copy(),
+                unit='mm',
+                parent_component=knuckle_copy,
+                joint=ap.joint if copy_joints else None
+            )
+            knuckle_copy.attachment_points.append(ap_copy)
+
+        # Copy transformation state
+        knuckle_copy.rotation_matrix = self.rotation_matrix.copy()
+        knuckle_copy.centroid = self.centroid.copy() if self.centroid is not None else None
+        knuckle_copy.center_of_mass = self.center_of_mass.copy() if self.center_of_mass is not None else None
+
+        return knuckle_copy
+
     def to_dict(self) -> dict:
         """
         Serialize the suspension knuckle to a dictionary.

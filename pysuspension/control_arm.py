@@ -188,6 +188,102 @@ class ControlArm(RigidBody):
         # Recalculate centroid and center of mass
         self._update_centroid()
 
+    def copy(self, copy_joints: bool = False) -> 'ControlArm':
+        """
+        Create a deep copy of this control arm.
+
+        Creates new copies of all links and attachment points. The copied
+        control arm will have the same name, mass, and geometry but will
+        be a completely independent object.
+
+        Args:
+            copy_joints: If True, preserves joint references on copied attachment points.
+                        If False, copied points have no joint connections (default).
+
+        Returns:
+            New ControlArm instance with copied links and attachment points
+
+        Note:
+            The copy will have the same rotation_matrix and centroid as the original.
+            Original state tracking (_original_link_endpoints, etc.) is reset for the copy.
+        """
+        # Create new control arm with same name and mass
+        arm_copy = ControlArm(name=self.name, mass=self.mass, mass_unit='kg')
+
+        # Copy all links
+        # Need to track endpoint mappings to handle shared endpoints between links
+        endpoint_mapping = {}  # id(original_endpoint) -> copied_endpoint
+
+        for link in self.links:
+            # Check if we've already copied the endpoints (shared between links)
+            endpoint1_id = id(link.endpoint1)
+            endpoint2_id = id(link.endpoint2)
+
+            # Copy endpoint1 if not already copied
+            if endpoint1_id in endpoint_mapping:
+                endpoint1_copy = endpoint_mapping[endpoint1_id]
+            else:
+                endpoint1_copy = AttachmentPoint(
+                    name=link.endpoint1.name,
+                    position=link.endpoint1.position.copy(),
+                    unit='mm',
+                    parent_component=None,
+                    joint=link.endpoint1.joint if copy_joints else None
+                )
+                endpoint_mapping[endpoint1_id] = endpoint1_copy
+
+            # Copy endpoint2 if not already copied
+            if endpoint2_id in endpoint_mapping:
+                endpoint2_copy = endpoint_mapping[endpoint2_id]
+            else:
+                endpoint2_copy = AttachmentPoint(
+                    name=link.endpoint2.name,
+                    position=link.endpoint2.position.copy(),
+                    unit='mm',
+                    parent_component=None,
+                    joint=link.endpoint2.joint if copy_joints else None
+                )
+                endpoint_mapping[endpoint2_id] = endpoint_mapping[endpoint2_id] = endpoint2_copy
+
+            # Create copied link
+            link_copy = SuspensionLink(
+                endpoint1=endpoint1_copy,
+                endpoint2=endpoint2_copy,
+                name=link.name,
+                unit='mm'
+            )
+
+            arm_copy.add_link(link_copy)
+
+        # Copy additional attachment points (not part of links)
+        for ap in self.attachment_points:
+            ap_id = id(ap)
+
+            # Check if this attachment point was already copied as part of a link
+            if ap_id in endpoint_mapping:
+                # Already copied, just need to add reference
+                # (It's already part of the control arm through the link)
+                continue
+            else:
+                # Copy this attachment point
+                ap_copy = AttachmentPoint(
+                    name=ap.name,
+                    position=ap.position.copy(),
+                    unit='mm',
+                    parent_component=arm_copy,
+                    joint=ap.joint if copy_joints else None
+                )
+                arm_copy.attachment_points.append(ap_copy)
+                endpoint_mapping[ap_id] = ap_copy
+
+        # Copy transformation state
+        arm_copy.rotation_matrix = self.rotation_matrix.copy()
+
+        # Update centroid
+        arm_copy._update_centroid()
+
+        return arm_copy
+
     def to_dict(self) -> dict:
         """
         Serialize the control arm to a dictionary.

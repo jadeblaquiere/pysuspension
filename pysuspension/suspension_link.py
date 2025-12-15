@@ -353,6 +353,53 @@ class SuspensionLink:
 
         return weighted_rms_error
 
+    def copy(self, copy_joints: bool = False) -> 'SuspensionLink':
+        """
+        Create a deep copy of this suspension link.
+
+        Creates new AttachmentPoint objects for both endpoints with the same
+        positions and names. The new link will have the same length and name.
+
+        Args:
+            copy_joints: If True, preserves joint references on copied points.
+                        If False, copied points have no joint connections (default).
+
+        Returns:
+            New SuspensionLink instance with copied endpoints
+
+        Note:
+            Parent component references are NOT copied - the copied endpoints
+            will have parent_component set to the new link.
+        """
+        # Copy the endpoint attachment points
+        # Don't copy joint connections - those will be reconstructed separately
+        endpoint1_copy = AttachmentPoint(
+            name=self.endpoint1.name,
+            position=self.endpoint1.position.copy(),
+            unit='mm',
+            parent_component=None,  # Will be set when creating the link
+            joint=self.endpoint1.joint if copy_joints else None
+        )
+
+        endpoint2_copy = AttachmentPoint(
+            name=self.endpoint2.name,
+            position=self.endpoint2.position.copy(),
+            unit='mm',
+            parent_component=None,  # Will be set when creating the link
+            joint=self.endpoint2.joint if copy_joints else None
+        )
+
+        # Create new link with copied endpoints
+        # The link constructor will set parent_component references
+        link_copy = SuspensionLink(
+            endpoint1=endpoint1_copy,
+            endpoint2=endpoint2_copy,
+            name=self.name,
+            unit='mm'
+        )
+
+        return link_copy
+
     def to_dict(self) -> dict:
         """
         Serialize the suspension link to a dictionary.

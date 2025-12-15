@@ -125,19 +125,23 @@ class AttachmentPoint:
         if self.joint is not None:
             self.joint.remove_attachment_point(self)
 
-    def copy(self) -> 'AttachmentPoint':
+    def copy(self, copy_joint: bool = False, copy_parent: bool = True) -> 'AttachmentPoint':
         """
-        Create a copy of this attachment point without joint connection.
+        Create a copy of this attachment point.
+
+        Args:
+            copy_joint: If True, preserves joint reference. If False, sets joint to None (default).
+            copy_parent: If True, preserves parent_component reference (default). If False, sets to None.
 
         Returns:
-            New AttachmentPoint with same name, position, and properties but no joint
+            New AttachmentPoint with same name and position
         """
         return AttachmentPoint(
             name=self.name,
             position=self._position_mm.copy(),
             unit='mm',
-            parent_component=self.parent_component,
-            joint=None  # Don't copy joint connection
+            parent_component=self.parent_component if copy_parent else None,
+            joint=self.joint if copy_joint else None
         )
 
     def to_dict(self) -> dict:
