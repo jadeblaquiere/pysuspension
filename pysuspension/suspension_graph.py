@@ -232,8 +232,8 @@ def discover_suspension_graph(knuckle: 'SuspensionKnuckle') -> SuspensionGraph:
                         visited_components.add(component_id)
 
                         # Add inner pivot points to queue (left and right)
-                        # The housing attachment points belong to the housing RigidBody,
-                        # not the SteeringRack itself, so we only handle the inner pivots
+                        # The housing attachment points are now part of the SteeringRack RigidBody.
+                        # Here we only handle the inner pivots explicitly for clarity.
                         if id(parent.left_inner_pivot) not in visited_points:
                             queue.append(parent.left_inner_pivot)
                             graph.all_attachment_points.append(parent.left_inner_pivot)

@@ -1,26 +1,31 @@
 import numpy as np
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Optional
 from .rigid_body import RigidBody
 from .suspension_link import SuspensionLink
 from .attachment_point import AttachmentPoint
-from .units import to_mm, from_mm
+from .units import to_mm, from_mm, to_kg
+from .joint_types import JointType, JOINT_STIFFNESS
 
 
-class SteeringRack:
+class SteeringRack(RigidBody):
     """
     Represents a steering rack unit with housing and inner tie rod pivots.
+
+    Inherits from RigidBody to provide rigid body transformation behavior.
+    All attachment points (housing + inner pivots) are managed by the RigidBody base class.
 
     All positions are stored internally in millimeters (mm).
 
     The steering rack unit consists of:
-    - Housing with attachment points that connect to the chassis (≥3 points, RigidBody)
+    - Housing with attachment points that connect to the chassis (≥3 points)
     - A steering rack that moves linearly within the housing
     - Two inner tie rod pivots (on the rack) where tie rods attach
     - Travel per rotation (determines steering ratio)
     - Maximum displacement from center
 
-    The housing is implemented as a RigidBody member, providing rigid body
-    transformation behavior for chassis mounting.
+    All attachment points (housing + inner pivots) are in self.attachment_points.
+    Housing points (first N) are used for rigid body fitting.
+    Inner pivots (last 2) follow transformations and maintain steering displacement.
 
     Tie rods are modeled separately as SuspensionLink objects and connected
     to the rack's inner pivots via SuspensionJoints.
@@ -54,7 +59,9 @@ class SteeringRack:
                  travel_per_rotation: float,  # mm of rack travel per degree of steering
                  max_displacement: float,  # mm maximum displacement from center
                  name: str = "steering_rack",
-                 unit: str = 'mm'):
+                 unit: str = 'mm',
+                 mass: float = 0.0,
+                 mass_unit: str = 'kg'):
         """
         Initialize a steering rack unit.
 
@@ -66,6 +73,8 @@ class SteeringRack:
             max_displacement: Maximum rack displacement from center (in specified unit)
             name: Identifier for the steering rack
             unit: Unit of input positions if raw positions are provided (default: 'mm')
+            mass: Mass of the steering rack (default: 0.0)
+            mass_unit: Unit of input mass (default: 'kg')
 
         Raises:
             ValueError: If fewer than 3 housing attachment points provided
@@ -73,36 +82,35 @@ class SteeringRack:
         if len(housing_attachments) < 3:
             raise ValueError("Housing requires at least 3 attachment points for rigid body mounting")
 
-        self.name = name
+        # Initialize RigidBody base
+        super().__init__(name=name, mass=mass, mass_unit=mass_unit)
 
-        # Convert housing attachments to AttachmentPoint objects if needed
+        # Convert and add housing attachment points to self.attachment_points
         housing_points = [
             self._ensure_attachment_point(pos, f"{name}_mount_{i}", unit)
             for i, pos in enumerate(housing_attachments)
         ]
-
-        # Create housing as a RigidBody (rigid body connected to chassis)
-        self.housing = RigidBody(name=f"{name}_housing", mass=0.0, mass_unit='kg')
         for point in housing_points:
-            self.housing.add_attachment_point(point)
-            point.parent_component = self.housing
+            self.add_attachment_point(point)
 
-        # Convert pivot inputs to AttachmentPoint objects if needed
-        self.left_inner_pivot = self._ensure_attachment_point(
+        # Track housing attachment count (for selective fitting)
+        self._housing_attachment_count = len(housing_points)
+
+        # Convert pivot inputs to AttachmentPoint objects and ADD to self.attachment_points
+        self._left_inner_pivot = self._ensure_attachment_point(
             left_inner_pivot, f"{name}_left_inner", unit
         )
-        self.left_inner_pivot.parent_component = self
-        self.right_inner_pivot = self._ensure_attachment_point(
+        self._left_inner_pivot.parent_component = self
+        self.add_attachment_point(self._left_inner_pivot)
+
+        self._right_inner_pivot = self._ensure_attachment_point(
             right_inner_pivot, f"{name}_right_inner", unit
         )
-        self.right_inner_pivot.parent_component = self
-
-        # Travel parameters (in mm)
-        self.travel_per_rotation = to_mm(travel_per_rotation, unit)
-        self.max_displacement = to_mm(max_displacement, unit)
+        self._right_inner_pivot.parent_component = self
+        self.add_attachment_point(self._right_inner_pivot)
 
         # Calculate rack axis (direction of travel) from inner pivot points
-        rack_vector = self.right_inner_pivot.position - self.left_inner_pivot.position
+        rack_vector = self._right_inner_pivot.position - self._left_inner_pivot.position
         self.rack_length = np.linalg.norm(rack_vector)
         if self.rack_length < 1e-6:
             raise ValueError("Inner pivot points are too close together")
@@ -110,25 +118,79 @@ class SteeringRack:
         self.rack_axis_initial = self.rack_axis.copy()
 
         # Calculate rack center position
-        self.rack_center_initial = (self.left_inner_pivot.position + self.right_inner_pivot.position) / 2.0
+        self.rack_center_initial = (self._left_inner_pivot.position + self._right_inner_pivot.position) / 2.0
         self.rack_center = self.rack_center_initial.copy()
 
         # Store initial positions for reference (used by set_turn_angle as reference)
-        self.left_inner_pivot_initial = self.left_inner_pivot.position.copy()
-        self.right_inner_pivot_initial = self.right_inner_pivot.position.copy()
+        self.left_inner_pivot_initial = self._left_inner_pivot.position.copy()
+        self.right_inner_pivot_initial = self._right_inner_pivot.position.copy()
 
         # Store original positions for reset (never updated by transformations)
-        # Note: Housing original positions are now managed by self.housing (RigidBody)
-        self._original_left_inner_pivot = self.left_inner_pivot.position.copy()
-        self._original_right_inner_pivot = self.right_inner_pivot.position.copy()
+        self._original_left_inner_pivot = self._left_inner_pivot.position.copy()
+        self._original_right_inner_pivot = self._right_inner_pivot.position.copy()
         self._original_rack_center = self.rack_center.copy()
         self._original_rack_axis = self.rack_axis.copy()
+
+        # Travel parameters (in mm)
+        self.travel_per_rotation = to_mm(travel_per_rotation, unit)
+        self.max_displacement = to_mm(max_displacement, unit)
 
         # Current displacement from center (positive = right, negative = left)
         self.current_displacement = 0.0
 
         # Current steering angle
         self.current_angle = 0.0
+
+    def get_left_inner_pivot(self) -> AttachmentPoint:
+        """
+        Get the left inner pivot attachment point.
+
+        Returns:
+            AttachmentPoint object for left inner pivot
+        """
+        return self._left_inner_pivot
+
+    def get_right_inner_pivot(self) -> AttachmentPoint:
+        """
+        Get the right inner pivot attachment point.
+
+        Returns:
+            AttachmentPoint object for right inner pivot
+        """
+        return self._right_inner_pivot
+
+    def get_housing_attachment_points(self) -> List[AttachmentPoint]:
+        """
+        Get only the housing attachment points (used for chassis mounting).
+
+        Returns:
+            List of housing AttachmentPoint objects (excludes inner pivots)
+        """
+        return self.attachment_points[:self._housing_attachment_count]
+
+    def get_housing_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
+        """
+        Get only the housing attachment positions (used for chassis mounting).
+
+        Args:
+            unit: Unit for output (default: 'mm')
+
+        Returns:
+            List of housing attachment positions in specified unit
+        """
+        housing_points = self.get_housing_attachment_points()
+        return [ap.get_position(unit) for ap in housing_points]
+
+    # Backward compatibility properties
+    @property
+    def left_inner_pivot(self) -> AttachmentPoint:
+        """Backward compatibility property for left inner pivot."""
+        return self._left_inner_pivot
+
+    @property
+    def right_inner_pivot(self) -> AttachmentPoint:
+        """Backward compatibility property for right inner pivot."""
+        return self._right_inner_pivot
 
     def set_turn_angle(self, angle_degrees: float) -> None:
         """
@@ -156,21 +218,25 @@ class SteeringRack:
         self.rack_center = self.rack_center_initial + displacement_vector
 
         # Update AttachmentPoint positions
-        self.left_inner_pivot.set_position(new_left_inner, unit='mm')
-        self.right_inner_pivot.set_position(new_right_inner, unit='mm')
+        self._left_inner_pivot.set_position(new_left_inner, unit='mm')
+        self._right_inner_pivot.set_position(new_right_inner, unit='mm')
 
     def get_chassis_attachment_points(self) -> List[AttachmentPoint]:
         """
         Get the housing attachment point objects (connect to chassis).
 
+        Deprecated: Use get_housing_attachment_points() instead.
+
         Returns:
             List of AttachmentPoint objects for the housing
         """
-        return self.housing.get_all_attachment_points()
+        return self.get_housing_attachment_points()
 
     def get_chassis_attachment_positions(self, unit: str = 'mm') -> List[np.ndarray]:
         """
         Get the housing attachment positions (connect to chassis).
+
+        Deprecated: Use get_housing_attachment_positions() instead.
 
         Args:
             unit: Unit for output (default: 'mm')
@@ -178,17 +244,20 @@ class SteeringRack:
         Returns:
             List of housing attachment positions in specified unit
         """
-        return self.housing.get_all_attachment_positions(unit=unit)
+        return self.get_housing_attachment_positions(unit=unit)
 
     def fit_chassis_to_attachment_targets(self, target_positions: List[np.ndarray],
                                           unit: str = 'mm') -> float:
         """
         Fit the steering rack housing to target chassis attachment positions.
-        Performs rigid body fit on housing and applies the transformation to the rack
-        and inner pivots.
+
+        This method fits ONLY the housing attachment points (not inner pivots).
+        The inner pivots follow the housing transformation while maintaining their
+        steering displacement along the rack axis.
 
         Args:
-            target_positions: List of target positions for housing attachments (≥3) in specified unit
+            target_positions: List of target positions for HOUSING attachments only
+                             (length must match housing attachment count, not total)
             unit: Unit of input positions (default: 'mm')
 
         Returns:
@@ -197,47 +266,74 @@ class SteeringRack:
         Raises:
             ValueError: If number of target positions doesn't match housing attachment count
         """
-        # Store original housing positions to calculate transformation
-        original_housing_positions = self.housing.get_all_attachment_positions(unit='mm')
+        if len(target_positions) != self._housing_attachment_count:
+            raise ValueError(
+                f"Expected {self._housing_attachment_count} target positions for housing, "
+                f"got {len(target_positions)}"
+            )
 
-        # Use housing's fit_to_attachment_targets (which applies the transformation)
-        rms_error = self.housing.fit_to_attachment_targets(target_positions, unit=unit)
+        # Freeze original state on first transformation
+        self._original_state_frozen = True
 
-        # Calculate the transformation that was applied by comparing before/after
-        new_housing_positions = self.housing.get_all_attachment_positions(unit='mm')
+        # Get current housing positions only
+        housing_points = self.get_housing_attachment_points()
+        current_positions = [ap.position.copy() for ap in housing_points]
 
-        # Extract rotation and translation from the housing transformation
-        # We can use the housing's rotation_matrix since it was updated by fit_to_attachment_targets
-        R = self.housing.rotation_matrix
+        # Convert target positions to mm
+        target_points = np.array([to_mm(np.array(p, dtype=float), unit) for p in target_positions])
+        current_points = np.array(current_positions)
 
-        # Calculate translation from centroid movement
-        original_centroid = np.mean(original_housing_positions, axis=0)
-        new_centroid = self.housing.centroid
-        t = new_centroid - R @ original_centroid
+        # Get joint stiffness for housing points only
+        stiffness_weights = []
+        for ap in housing_points:
+            if ap.joint is not None:
+                stiffness = JOINT_STIFFNESS[ap.joint.joint_type]
+            else:
+                stiffness = JOINT_STIFFNESS[JointType.RIGID]
+            stiffness_weights.append(stiffness)
+        stiffness_weights = np.array(stiffness_weights)
+        total_weight = np.sum(stiffness_weights)
 
-        # Apply the same transformation to rack axis (rotation only, it's a direction vector)
-        self.rack_axis = R @ self.rack_axis
-        self.rack_axis_initial = self.rack_axis.copy()
+        # Compute weighted centroids
+        centroid_current = np.sum(current_points * stiffness_weights[:, np.newaxis], axis=0) / total_weight
+        centroid_target = np.sum(target_points * stiffness_weights[:, np.newaxis], axis=0) / total_weight
 
-        # Apply transformation to rack center and inner pivots
-        self.rack_center = R @ self.rack_center + t
-        self.rack_center_initial = R @ self.rack_center_initial + t
+        # Center the point sets
+        current_centered = current_points - centroid_current
+        target_centered = target_points - centroid_target
 
-        # Transform inner pivot positions
-        new_left_inner = R @ self.left_inner_pivot.position + t
-        new_right_inner = R @ self.right_inner_pivot.position + t
-        self.left_inner_pivot_initial = R @ self.left_inner_pivot_initial + t
-        self.right_inner_pivot_initial = R @ self.right_inner_pivot_initial + t
+        # Compute weighted cross-covariance matrix H
+        weighted_current = current_centered * np.sqrt(stiffness_weights[:, np.newaxis])
+        weighted_target = target_centered * np.sqrt(stiffness_weights[:, np.newaxis])
+        H = weighted_current.T @ weighted_target
 
-        # Update AttachmentPoint positions
-        self.left_inner_pivot.set_position(new_left_inner, unit='mm')
-        self.right_inner_pivot.set_position(new_right_inner, unit='mm')
+        # SVD (Kabsch algorithm)
+        U, S, Vt = np.linalg.svd(H)
+        R = Vt.T @ U.T
 
-        # Reset displacement and angle (transformation moves the entire unit, not steering input)
+        # Ensure proper rotation (det(R) = 1)
+        if np.linalg.det(R) < 0:
+            Vt[-1, :] *= -1
+            R = Vt.T @ U.T
+
+        # Compute translation
+        t = centroid_target - R @ centroid_current
+
+        # Apply transformation to ALL attachment points (housing + inner pivots) and rack state
+        self._apply_transformation(R, t)
+
+        # Calculate RMS error (housing points only)
+        transformed_points = (R @ current_points.T).T + t
+        errors = target_points - transformed_points
+        squared_errors = np.sum(errors**2, axis=1)
+        weighted_rms_error = np.sqrt(np.sum(stiffness_weights * squared_errors) / total_weight)
+
+        # Reset steering angle and displacement after transformation
+        # (transformation moves entire unit, not steering input)
         self.current_displacement = 0.0
         self.current_angle = 0.0
 
-        return rms_error
+        return weighted_rms_error
 
     def get_rack_displacement(self, unit: str = 'mm') -> float:
         """
@@ -260,6 +356,65 @@ class SteeringRack:
         """
         return self.current_angle
 
+    def _apply_transformation(self, R: np.ndarray, t: np.ndarray) -> None:
+        """
+        Apply rigid body transformation to housing attachments and rack pivots.
+
+        The base class handles transforming all attachment_points (housing + inner pivots).
+        We only need to transform additional rack-specific state:
+        - Rack center position
+        - Rack axis direction
+        - Initial positions for steering reference
+
+        Args:
+            R: 3x3 rotation matrix
+            t: 3D translation vector (in mm)
+        """
+        # Call parent to handle ALL attachment points (housing + inner pivots) and center of mass
+        super()._apply_transformation(R, t)
+
+        # Transform rack axis (rotation only - it's a direction vector)
+        self.rack_axis = R @ self.rack_axis
+        self.rack_axis_initial = self.rack_axis.copy()
+
+        # Transform rack center and its initial position
+        self.rack_center = R @ self.rack_center + t
+        self.rack_center_initial = R @ self.rack_center_initial + t
+
+        # Transform initial positions (used as reference for set_turn_angle)
+        self.left_inner_pivot_initial = R @ self.left_inner_pivot_initial + t
+        self.right_inner_pivot_initial = R @ self.right_inner_pivot_initial + t
+
+        # Note: Steering angle and displacement are NOT reset here
+        # They represent user input, not transformation state
+
+    def reset_to_origin(self) -> None:
+        """
+        Reset the steering rack to its originally defined position.
+
+        Resets both housing (via parent) and rack-specific state:
+        - Housing attachment points (via parent)
+        - Inner pivot positions (via parent)
+        - Rack center and axis
+        - Steering angle and displacement
+        """
+        # Reset ALL attachment points (housing + inner pivots) via parent
+        super().reset_to_origin()
+
+        # Reset rack-specific state to original positions
+        self.rack_center = self._original_rack_center.copy()
+        self.rack_center_initial = self._original_rack_center.copy()
+        self.rack_axis = self._original_rack_axis.copy()
+        self.rack_axis_initial = self._original_rack_axis.copy()
+
+        # Reset initial positions for steering reference
+        self.left_inner_pivot_initial = self._original_left_inner_pivot.copy()
+        self.right_inner_pivot_initial = self._original_right_inner_pivot.copy()
+
+        # Reset steering angle and displacement
+        self.current_displacement = 0.0
+        self.current_angle = 0.0
+
     def copy(self, copy_joints: bool = False) -> 'SteeringRack':
         """
         Create a copy of the steering rack.
@@ -268,17 +423,17 @@ class SteeringRack:
             copy_joints: If True, copy joint references; if False, set joints to None
 
         Returns:
-            New SteeringRack instance with copied housing and inner pivots
+            New SteeringRack instance with copied state
         """
-        # Copy housing attachment points
+        # Copy housing attachment points only (first N attachment points)
         housing_attachments_copy = []
-        for ap in self.housing.get_all_attachment_points():
+        for ap in self.get_housing_attachment_points():
             ap_copy = ap.copy(copy_joint=copy_joints, copy_parent=False)
             housing_attachments_copy.append(ap_copy)
 
         # Copy inner pivot points
-        left_inner_copy = self.left_inner_pivot.copy(copy_joint=copy_joints, copy_parent=False)
-        right_inner_copy = self.right_inner_pivot.copy(copy_joint=copy_joints, copy_parent=False)
+        left_inner_copy = self._left_inner_pivot.copy(copy_joint=copy_joints, copy_parent=False)
+        right_inner_copy = self._right_inner_pivot.copy(copy_joint=copy_joints, copy_parent=False)
 
         # Create new steering rack
         rack_copy = SteeringRack(
@@ -288,7 +443,9 @@ class SteeringRack:
             travel_per_rotation=self.travel_per_rotation,
             max_displacement=self.max_displacement,
             name=self.name,
-            unit='mm'
+            unit='mm',
+            mass=self.mass,
+            mass_unit='kg'
         )
 
         # Copy current state
@@ -296,54 +453,38 @@ class SteeringRack:
 
         return rack_copy
 
-    def reset_to_origin(self) -> None:
-        """
-        Reset the steering rack to its originally defined position.
-        Resets housing, rack, inner pivots, and steering angle to
-        the positions defined at construction.
-        """
-        # Reset housing to original positions (using RigidBody's reset)
-        self.housing.reset_to_origin()
-
-        # Reset rack center and axis to original
-        self.rack_center = self._original_rack_center.copy()
-        self.rack_center_initial = self._original_rack_center.copy()
-        self.rack_axis = self._original_rack_axis.copy()
-        self.rack_axis_initial = self._original_rack_axis.copy()
-
-        # Reset inner pivots to original positions
-        self.left_inner_pivot.set_position(self._original_left_inner_pivot, unit='mm')
-        self.right_inner_pivot.set_position(self._original_right_inner_pivot, unit='mm')
-        self.left_inner_pivot_initial = self._original_left_inner_pivot.copy()
-        self.right_inner_pivot_initial = self._original_right_inner_pivot.copy()
-
-        # Reset steering angle and displacement
-        self.current_displacement = 0.0
-        self.current_angle = 0.0
-
     def to_dict(self) -> dict:
         """
         Serialize the steering rack to a dictionary.
 
+        Combines RigidBody data (housing + inner pivots in attachment_points)
+        with SteeringRack-specific data.
+
         Returns:
             Dictionary representation suitable for JSON serialization
         """
-        return {
-            'name': self.name,
-            'housing': self.housing.to_dict(),
-            'left_inner_pivot': self.left_inner_pivot.to_dict(),
-            'right_inner_pivot': self.right_inner_pivot.to_dict(),
-            'travel_per_rotation': float(self.travel_per_rotation),  # Store in mm
-            'max_displacement': float(self.max_displacement),  # Store in mm
-            'current_angle': float(self.current_angle),  # Store current state
-            'current_displacement': float(self.current_displacement),  # Store current state
-            'unit': 'mm'
-        }
+        # Get base RigidBody serialization (includes ALL attachment points)
+        data = super().to_dict()
+
+        # Add SteeringRack-specific fields
+        data.update({
+            'type': 'SteeringRack',  # For type identification
+            '_housing_attachment_count': self._housing_attachment_count,  # For partitioning
+            'travel_per_rotation': float(self.travel_per_rotation),
+            'max_displacement': float(self.max_displacement),
+            'current_angle': float(self.current_angle),
+            'current_displacement': float(self.current_displacement),
+        })
+
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> 'SteeringRack':
         """
         Deserialize a steering rack from a dictionary.
+
+        Supports both new format (inherits RigidBody) and old format (housing member)
+        for backward compatibility.
 
         Args:
             data: Dictionary containing steering rack data
@@ -355,42 +496,45 @@ class SteeringRack:
             KeyError: If required fields are missing
             ValueError: If data is invalid
         """
-        # Extract housing attachment positions
-        # Support both old format (housing_attachment_points) and new format (housing RigidBody)
+        # Handle backward compatibility with old format
         if 'housing' in data:
-            # New format: housing is a RigidBody
+            # Old format: housing was a separate RigidBody member
             housing = RigidBody.from_dict(data['housing'])
             housing_positions = housing.get_all_attachment_points()
-        else:
-            # Old format: housing_attachment_points list
-            housing_positions = [ap_data['position'] for ap_data in data['housing_attachment_points']]
 
-        # Extract inner pivot positions
-        # Support both old format (via tie rods) and new format (direct AttachmentPoints)
-        if 'left_inner_pivot' in data and 'right_inner_pivot' in data:
-            # New format: inner pivots are AttachmentPoints
-            left_inner = AttachmentPoint.from_dict(data['left_inner_pivot'])
-            right_inner = AttachmentPoint.from_dict(data['right_inner_pivot'])
-            left_inner_pos = left_inner.copy()
-            right_inner_pos = right_inner.copy()
-        elif 'left_tie_rod' in data and 'right_tie_rod' in data:
-            # Old format: extract inner pivots from tie rods (backward compatibility)
-            left_tie_rod = SuspensionLink.from_dict(data['left_tie_rod'])
-            right_tie_rod = SuspensionLink.from_dict(data['right_tie_rod'])
-            left_inner_pos = left_tie_rod.endpoint1.position
-            right_inner_pos = right_tie_rod.endpoint1.position
+            # Extract inner pivot data from old format
+            if 'left_inner_pivot' in data and 'right_inner_pivot' in data:
+                left_inner = AttachmentPoint.from_dict(data['left_inner_pivot'])
+                right_inner = AttachmentPoint.from_dict(data['right_inner_pivot'])
+            else:
+                raise KeyError("Missing inner pivot data in serialized SteeringRack")
         else:
-            raise KeyError("Missing inner pivot data in serialized SteeringRack")
+            # New format: attachment_points includes housing + inner pivots
+            all_attachment_points = [
+                AttachmentPoint.from_dict(ap_data)
+                for ap_data in data.get('attachment_points', [])
+            ]
+
+            # Partition based on _housing_attachment_count
+            housing_count = data.get('_housing_attachment_count')
+            if housing_count is None:
+                raise KeyError("Missing _housing_attachment_count in new format")
+
+            housing_positions = all_attachment_points[:housing_count]
+            left_inner = all_attachment_points[housing_count]
+            right_inner = all_attachment_points[housing_count + 1]
 
         # Create the steering rack
         rack = cls(
             housing_attachments=housing_positions,
-            left_inner_pivot=left_inner_pos,
-            right_inner_pivot=right_inner_pos,
+            left_inner_pivot=left_inner,
+            right_inner_pivot=right_inner,
             travel_per_rotation=data['travel_per_rotation'],
             max_displacement=data['max_displacement'],
             name=data['name'],
-            unit=data.get('unit', 'mm')
+            unit='mm',
+            mass=data.get('mass', 0.0),
+            mass_unit=data.get('mass_unit', 'kg')
         )
 
         # Restore current state if present
@@ -400,10 +544,12 @@ class SteeringRack:
         return rack
 
     def __repr__(self) -> str:
-        housing_centroid_str = f"{self.housing.centroid} mm" if self.housing.centroid is not None else "None"
+        """String representation showing housing and rack state."""
+        centroid_str = f"{self.centroid} mm" if self.centroid is not None else "None"
         return (f"SteeringRack('{self.name}',\n"
-                f"  housing_centroid={housing_centroid_str},\n"
-                f"  housing_attachments={len(self.housing.attachment_points)},\n"
+                f"  centroid={centroid_str},\n"
+                f"  housing_attachments={self._housing_attachment_count},\n"
+                f"  total_attachments={len(self.attachment_points)},\n"
                 f"  rack_center={self.rack_center} mm,\n"
                 f"  rack_length={self.rack_length:.3f} mm,\n"
                 f"  current_angle={self.current_angle:.2f}°,\n"

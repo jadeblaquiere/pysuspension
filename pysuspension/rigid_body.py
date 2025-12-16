@@ -33,7 +33,7 @@ class RigidBody:
     - ControlArm: Rigid body with multiple links
     - Chassis: Rigid body with corners and axles
     - SuspensionKnuckle: Rigid body with tire geometry
-    - SteeringRack: Housing is a rigid body
+    - SteeringRack: Rigid body with movable internal rack pivots
     """
 
     def __init__(self, name: str = "rigid_body", mass: float = 0.0, mass_unit: str = 'kg'):
