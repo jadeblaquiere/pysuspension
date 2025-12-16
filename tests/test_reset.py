@@ -8,7 +8,6 @@ sys.path.insert(0, 'pysuspension')
 
 from suspension_knuckle import SuspensionKnuckle
 from control_arm import ControlArm
-from suspension_link import SuspensionLink
 from chassis import Chassis
 from chassis_corner import ChassisCorner
 from chassis_axle import ChassisAxle
@@ -76,25 +75,13 @@ def test_control_arm_reset():
     print("TEST: ControlArm reset_to_origin()")
     print("="*60)
 
-    # Create control arm with links
+    # Create control arm with attachment points
     control_arm = ControlArm(name="test_arm", mass=2.5, mass_unit='kg')
 
-    link1 = SuspensionLink(
-        endpoint1=[1300, 400, 550],
-        endpoint2=[1500, 750, 600],
-        name="front_link",
-        unit='mm'
-    )
-
-    link2 = SuspensionLink(
-        endpoint1=[1200, 400, 550],
-        endpoint2=[1500, 750, 600],
-        name="rear_link",
-        unit='mm'
-    )
-
-    control_arm.add_link(link1)
-    control_arm.add_link(link2)
+    # Add attachment points for a triangulated control arm
+    control_arm.add_attachment_point("front_chassis_mount", [1300, 400, 550], unit='mm')
+    control_arm.add_attachment_point("rear_chassis_mount", [1200, 400, 550], unit='mm')
+    control_arm.add_attachment_point("ball_joint", [1500, 750, 600], unit='mm')
     control_arm.add_attachment_point("sway_bar", [1250, 500, 500], unit='mm')
 
     # Store original values AFTER all attachments are added

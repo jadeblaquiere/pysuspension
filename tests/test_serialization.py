@@ -74,31 +74,18 @@ def test_control_arm_serialization():
     """Test ControlArm serialization and deserialization."""
     print("\n--- Testing ControlArm Serialization ---")
 
-    # Create a control arm with links and attachment points
+    # Create a control arm with attachment points
     control_arm = ControlArm(name="test_control_arm", mass=2.5, mass_unit='kg')
 
-    link1 = SuspensionLink(
-        endpoint1=[1300, 400, 550],
-        endpoint2=[1500, 750, 600],
-        name="front_link",
-        unit='mm'
-    )
-    control_arm.add_link(link1)
-
-    link2 = SuspensionLink(
-        endpoint1=[1400, 350, 520],
-        endpoint2=[1500, 750, 600],
-        name="rear_link",
-        unit='mm'
-    )
-    control_arm.add_link(link2)
-
-    control_arm.add_attachment_point("mount1", [1300, 400, 550], unit='mm')
-    control_arm.add_attachment_point("mount2", [1400, 350, 520], unit='mm')
+    # Add attachment points for a triangulated control arm
+    control_arm.add_attachment_point("front_chassis_mount", [1300, 400, 550], unit='mm')
+    control_arm.add_attachment_point("rear_chassis_mount", [1400, 350, 520], unit='mm')
+    control_arm.add_attachment_point("ball_joint", [1500, 750, 600], unit='mm')
+    control_arm.add_attachment_point("sway_bar", [1250, 500, 500], unit='mm')
 
     # Serialize
     data = control_arm.to_dict()
-    print(f"Serialized control arm with {len(data['links'])} links and {len(data['attachment_points'])} attachment points")
+    print(f"Serialized control arm with {len(data['attachment_points'])} attachment points")
 
     # Check JSON serializability
     json_str = json.dumps(data)
@@ -109,8 +96,10 @@ def test_control_arm_serialization():
     # Verify
     assert ca_restored.name == control_arm.name
     assert abs(ca_restored.mass - control_arm.mass) < 1e-6
-    assert len(ca_restored.links) == len(control_arm.links)
     assert len(ca_restored.attachment_points) == len(control_arm.attachment_points)
+    for i, ap in enumerate(ca_restored.attachment_points):
+        assert ap.name == control_arm.attachment_points[i].name
+        assert np.allclose(ap.position, control_arm.attachment_points[i].position)
     print("✓ ControlArm serialization test passed")
 
 

@@ -8,7 +8,6 @@ sys.path.insert(0, 'pysuspension')
 
 from attachment_point import AttachmentPoint
 from control_arm import ControlArm
-from suspension_link import SuspensionLink
 from chassis import Chassis
 from suspension_knuckle import SuspensionKnuckle
 
@@ -56,14 +55,9 @@ def test_control_arm_connections():
     # Create control arm
     control_arm = ControlArm(name="upper_arm", mass=2.5, mass_unit='kg')
 
-    link1 = SuspensionLink(
-        endpoint1=[1300, 400, 550],
-        endpoint2=[1500, 750, 600],
-        name="front_link",
-        unit='mm'
-    )
-
-    control_arm.add_link(link1)
+    # Add attachment points for the control arm
+    control_arm.add_attachment_point("front_mount", [1300, 400, 550], unit='mm')
+    control_arm.add_attachment_point("rear_mount", [1500, 750, 600], unit='mm')
     ball_joint = control_arm.add_attachment_point("ball_joint", [1400, 575, 575], unit='mm')
     sway_bar = control_arm.add_attachment_point("sway_bar", [1250, 500, 500], unit='mm')
 
@@ -150,14 +144,9 @@ def test_connections_persist_through_transforms():
     # Create control arm with attachments
     control_arm = ControlArm(name="test_arm", mass=2.5, mass_unit='kg')
 
-    link1 = SuspensionLink(
-        endpoint1=[1300, 400, 550],
-        endpoint2=[1500, 750, 600],
-        name="link1",
-        unit='mm'
-    )
-
-    control_arm.add_link(link1)
+    # Add attachment points for the control arm
+    control_arm.add_attachment_point("chassis_mount1", [1300, 400, 550], unit='mm')
+    control_arm.add_attachment_point("chassis_mount2", [1500, 750, 600], unit='mm')
     ap1 = control_arm.add_attachment_point("ap1", [1400, 575, 575], unit='mm')
     ap2 = control_arm.add_attachment_point("ap2", [1350, 500, 500], unit='mm')
 
@@ -210,8 +199,8 @@ def test_multi_component_connections():
 
     # Control arm
     upper_arm = ControlArm(name="upper_arm", mass=1.5, mass_unit='kg')
-    link1 = SuspensionLink([1300, 400, 550], [1500, 750, 600], "link1", unit='mm')
-    upper_arm.add_link(link1)
+    upper_arm.add_attachment_point("front_mount", [1300, 400, 550], unit='mm')
+    upper_arm.add_attachment_point("rear_mount", [1500, 750, 600], unit='mm')
     arm_chassis = upper_arm.add_attachment_point("chassis_mount", [1400, 575, 650], unit='mm')
     arm_knuckle = upper_arm.add_attachment_point("knuckle_mount", [1500, 750, 600], unit='mm')
 

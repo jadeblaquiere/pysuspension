@@ -80,9 +80,15 @@ def main():
     fl_knuckle_attachments = fl_knuckle.get_all_attachment_positions(absolute=True)  # default mm
     fl_knuckle_attachments_m = fl_knuckle.get_all_attachment_positions(absolute=True, unit='m')
     
-    # Upper control arm - links accept positions in mm by default
+    # Upper control arm - add attachment points
     fl_upper_arm = ControlArm(name="fl_upper_control_arm")
 
+    # Add attachment points to control arm
+    fl_upper_arm.add_attachment_point("upper_front_mount", fl_chassis_positions[0], unit='mm')
+    fl_upper_arm.add_attachment_point("upper_rear_mount", fl_chassis_positions[1], unit='mm')
+    fl_upper_arm.add_attachment_point("upper_ball_joint", fl_knuckle_attachments["upper_ball_joint"], unit='mm')
+
+    # Create links connecting the attachment points
     fl_upper_front_link = SuspensionLink(
         endpoint1=fl_chassis_positions[0],  # upper_front_mount (mm)
         endpoint2=fl_knuckle_attachments["upper_ball_joint"],  # (mm)
@@ -97,12 +103,15 @@ def main():
         unit='mm'
     )
 
-    fl_upper_arm.add_link(fl_upper_front_link)
-    fl_upper_arm.add_link(fl_upper_rear_link)
-
     # Lower control arm
     fl_lower_arm = ControlArm(name="fl_lower_control_arm")
 
+    # Add attachment points to control arm
+    fl_lower_arm.add_attachment_point("lower_front_mount", fl_chassis_positions[2], unit='mm')
+    fl_lower_arm.add_attachment_point("lower_rear_mount", fl_chassis_positions[3], unit='mm')
+    fl_lower_arm.add_attachment_point("lower_ball_joint", fl_knuckle_attachments["lower_ball_joint"], unit='mm')
+
+    # Create links connecting the attachment points
     fl_lower_front_link = SuspensionLink(
         endpoint1=fl_chassis_positions[2],  # lower_front_mount (mm)
         endpoint2=fl_knuckle_attachments["lower_ball_joint"],  # (mm)
@@ -116,9 +125,6 @@ def main():
         name="fl_lower_rear_link",
         unit='mm'
     )
-
-    fl_lower_arm.add_link(fl_lower_front_link)
-    fl_lower_arm.add_link(fl_lower_rear_link)
 
     # Tie rod
     fl_tie_rod = SuspensionLink(
