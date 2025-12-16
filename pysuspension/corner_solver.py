@@ -700,13 +700,13 @@ class CornerSolver(SuspensionSolver):
         # This includes both link endpoints and any additional attachment points
         attachments = []
         for link in control_arm.links:
-            if link.endpoint1 not in attachments:
+            if all(link.endpoint1 is not m for m in attachments):
                 attachments.append(link.endpoint1)
-            if link.endpoint2 not in attachments:
+            if all(link.endpoint2 is not m for m in attachments):
                 attachments.append(link.endpoint2)
         # Also include any extra attachment points
         for ap in control_arm.attachment_points:
-            if ap not in attachments:
+            if all(ap is not m for m in attachments):
                 attachments.append(ap)
 
         # Add all attachment points to solver state first
