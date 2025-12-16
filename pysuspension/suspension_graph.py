@@ -231,19 +231,15 @@ def discover_suspension_graph(knuckle: 'SuspensionKnuckle') -> SuspensionGraph:
                         graph.steering_racks.append(parent)
                         visited_components.add(component_id)
 
-                        # Add inner pivot points to queue (left and right)
-                        # The housing attachment points are now part of the SteeringRack RigidBody.
-                        # Here we only handle the inner pivots explicitly for clarity.
-                        if id(parent.left_inner_pivot) not in visited_points:
-                            queue.append(parent.left_inner_pivot)
-                            graph.all_attachment_points.append(parent.left_inner_pivot)
-                            graph.component_map[id(parent.left_inner_pivot)] = parent
-                            visited_points.add(id(parent.left_inner_pivot))
-                        if id(parent.right_inner_pivot) not in visited_points:
-                            queue.append(parent.right_inner_pivot)
-                            graph.all_attachment_points.append(parent.right_inner_pivot)
-                            graph.component_map[id(parent.right_inner_pivot)] = parent
-                            visited_points.add(id(parent.right_inner_pivot))
+                        # Add all attachment points (housing + inner pivots) to queue
+                        # SteeringRack now inherits from RigidBody with all attachment points
+                        # in self.attachment_points (housing mounts + inner pivots)
+                        for ap in parent.attachment_points:
+                            if id(ap) not in visited_points:
+                                queue.append(ap)
+                                graph.all_attachment_points.append(ap)
+                                graph.component_map[id(ap)] = parent
+                                visited_points.add(id(ap))
 
                 else:
                     # Unknown component type - just track the point
