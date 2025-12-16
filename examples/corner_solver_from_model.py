@@ -79,25 +79,23 @@ def create_double_wishbone_suspension():
 
     upper_arm = ControlArm("upper_control_arm")
 
-    # Front link (chassis to ball joint)
-    upper_front_link = SuspensionLink(
-        endpoint1=[1400, 0, 600],      # Chassis mount
-        endpoint2=[1400, 650, 580],    # Ball joint location
-        name="upper_front_link",
-        unit='mm'
+    # Front link attachment points (chassis to ball joint)
+    uf_chassis_arm = upper_arm.add_attachment_point(
+        "upper_front_chassis", [1400, 0, 600], unit='mm'
     )
-    upper_arm.add_link(upper_front_link)
-
-    # Rear link (chassis to ball joint - shared endpoint)
-    upper_rear_link = SuspensionLink(
-        endpoint1=[1200, 0, 600],      # Chassis mount
-        endpoint2=[1400, 650, 580],    # Ball joint location (shared)
-        name="upper_rear_link",
-        unit='mm'
+    uf_ball_arm = upper_arm.add_attachment_point(
+        "upper_front_ball", [1400, 650, 580], unit='mm'
     )
-    upper_arm.add_link(upper_rear_link)
 
-    print(f"   ✓ Created upper control arm with {len(upper_arm.links)} links")
+    # Rear link attachment points (chassis to ball joint - shared endpoint)
+    ur_chassis_arm = upper_arm.add_attachment_point(
+        "upper_rear_chassis", [1200, 0, 600], unit='mm'
+    )
+    ur_ball_arm = upper_arm.add_attachment_point(
+        "upper_rear_ball", [1400, 650, 580], unit='mm'
+    )
+
+    print(f"   ✓ Created upper control arm with {len(upper_arm.attachment_points)} attachment points")
 
     # ========================================================================
     # STEP 3: Create lower control arm
@@ -106,25 +104,23 @@ def create_double_wishbone_suspension():
 
     lower_arm = ControlArm("lower_control_arm")
 
-    # Front link
-    lower_front_link = SuspensionLink(
-        endpoint1=[1500, 0, 300],      # Chassis mount
-        endpoint2=[1400, 700, 200],    # Ball joint location
-        name="lower_front_link",
-        unit='mm'
+    # Front link attachment points
+    lf_chassis_arm = lower_arm.add_attachment_point(
+        "lower_front_chassis", [1500, 0, 300], unit='mm'
     )
-    lower_arm.add_link(lower_front_link)
-
-    # Rear link
-    lower_rear_link = SuspensionLink(
-        endpoint1=[1100, 0, 300],      # Chassis mount
-        endpoint2=[1400, 700, 200],    # Ball joint location (shared)
-        name="lower_rear_link",
-        unit='mm'
+    lf_ball_arm = lower_arm.add_attachment_point(
+        "lower_front_ball", [1400, 700, 200], unit='mm'
     )
-    lower_arm.add_link(lower_rear_link)
 
-    print(f"   ✓ Created lower control arm with {len(lower_arm.links)} links")
+    # Rear link attachment points
+    lr_chassis_arm = lower_arm.add_attachment_point(
+        "lower_rear_chassis", [1100, 0, 300], unit='mm'
+    )
+    lr_ball_arm = lower_arm.add_attachment_point(
+        "lower_rear_ball", [1400, 700, 200], unit='mm'
+    )
+
+    print(f"   ✓ Created lower control arm with {len(lower_arm.attachment_points)} attachment points")
 
     # ========================================================================
     # STEP 4: Create suspension knuckle
@@ -160,31 +156,31 @@ def create_double_wishbone_suspension():
     # Upper control arm to chassis (bushings)
     uf_bushing = SuspensionJoint("upper_front_bushing", JointType.BUSHING_SOFT)
     uf_bushing.add_attachment_point(uf_chassis)
-    uf_bushing.add_attachment_point(upper_front_link.endpoint1)
+    uf_bushing.add_attachment_point(uf_chassis_arm)
 
     ur_bushing = SuspensionJoint("upper_rear_bushing", JointType.BUSHING_SOFT)
     ur_bushing.add_attachment_point(ur_chassis)
-    ur_bushing.add_attachment_point(upper_rear_link.endpoint1)
+    ur_bushing.add_attachment_point(ur_chassis_arm)
 
     # Upper ball joint (control arm to knuckle)
     upper_ball = SuspensionJoint("upper_ball_joint", JointType.BALL_JOINT)
-    upper_ball.add_attachment_point(upper_front_link.endpoint2)
-    upper_ball.add_attachment_point(upper_rear_link.endpoint2)
+    upper_ball.add_attachment_point(uf_ball_arm)
+    upper_ball.add_attachment_point(ur_ball_arm)
     upper_ball.add_attachment_point(upper_ball_knuckle)
 
     # Lower control arm to chassis (bushings)
     lf_bushing = SuspensionJoint("lower_front_bushing", JointType.BUSHING_SOFT)
     lf_bushing.add_attachment_point(lf_chassis)
-    lf_bushing.add_attachment_point(lower_front_link.endpoint1)
+    lf_bushing.add_attachment_point(lf_chassis_arm)
 
     lr_bushing = SuspensionJoint("lower_rear_bushing", JointType.BUSHING_SOFT)
     lr_bushing.add_attachment_point(lr_chassis)
-    lr_bushing.add_attachment_point(lower_rear_link.endpoint1)
+    lr_bushing.add_attachment_point(lr_chassis_arm)
 
     # Lower ball joint (control arm to knuckle)
     lower_ball = SuspensionJoint("lower_ball_joint", JointType.BALL_JOINT)
-    lower_ball.add_attachment_point(lower_front_link.endpoint2)
-    lower_ball.add_attachment_point(lower_rear_link.endpoint2)
+    lower_ball.add_attachment_point(lf_ball_arm)
+    lower_ball.add_attachment_point(lr_ball_arm)
     lower_ball.add_attachment_point(lower_ball_knuckle)
 
     print("   ✓ Created 6 joints (4 bushings + 2 ball joints)")

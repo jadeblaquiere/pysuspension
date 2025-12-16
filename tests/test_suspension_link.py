@@ -105,16 +105,19 @@ def test_link_endpoints_in_control_arm():
     print("TEST: Connect Link Endpoints to Other Components")
     print("="*60)
 
-    # Create control arm with link
+    # Create control arm with attachment points
     control_arm = ControlArm(name="upper_arm", mass=2.0, mass_unit='kg')
 
     # Create external AttachmentPoints (simulating chassis and knuckle mounts)
     chassis_mount = AttachmentPoint("chassis_mount", [1400, 500, 650], unit='mm')
     knuckle_mount = AttachmentPoint("knuckle_mount", [1550, 750, 600], unit='mm')
 
+    # Add attachment points to control arm
+    control_arm.add_attachment_point("chassis_mount", [1400, 500, 650], unit='mm')
+    control_arm.add_attachment_point("knuckle_mount", [1550, 750, 600], unit='mm')
+
     # Create link from these attachment points
     link = SuspensionLink(chassis_mount, knuckle_mount, name="link1")
-    control_arm.add_link(link)
 
     print(f"Created control arm with link connecting:")
     print(f"  {chassis_mount.name} <-> {knuckle_mount.name}")

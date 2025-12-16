@@ -27,6 +27,12 @@ def test_corner_solver():
 
     # Upper control arm (shorter, at top)
     upper_arm = ControlArm("upper_control_arm")
+    upper_arm.add_attachment_point("upper_front_chassis", [1400, 0, 600], unit='mm')
+    upper_arm.add_attachment_point("upper_front_balljoint", [1400, 650, 580], unit='mm')
+    upper_arm.add_attachment_point("upper_rear_chassis", [1200, 0, 600], unit='mm')
+    upper_arm.add_attachment_point("upper_rear_balljoint", [1400, 650, 580], unit='mm')
+
+    # Create SuspensionLink objects for CornerSolver
     upper_front_link = SuspensionLink(
         endpoint1=[1400, 0, 600],     # Chassis mount (front)
         endpoint2=[1400, 650, 580],   # Ball joint
@@ -39,11 +45,15 @@ def test_corner_solver():
         name="upper_rear",
         unit='mm'
     )
-    upper_arm.add_link(upper_front_link)
-    upper_arm.add_link(upper_rear_link)
 
     # Lower control arm (longer, at bottom)
     lower_arm = ControlArm("lower_control_arm")
+    lower_arm.add_attachment_point("lower_front_chassis", [1500, 0, 300], unit='mm')
+    lower_arm.add_attachment_point("lower_front_balljoint", [1400, 700, 200], unit='mm')
+    lower_arm.add_attachment_point("lower_rear_chassis", [1100, 0, 300], unit='mm')
+    lower_arm.add_attachment_point("lower_rear_balljoint", [1400, 700, 200], unit='mm')
+
+    # Create SuspensionLink objects for CornerSolver
     lower_front_link = SuspensionLink(
         endpoint1=[1500, 0, 300],     # Chassis mount (front)
         endpoint2=[1400, 700, 200],   # Ball joint
@@ -56,14 +66,12 @@ def test_corner_solver():
         name="lower_rear",
         unit='mm'
     )
-    lower_arm.add_link(lower_front_link)
-    lower_arm.add_link(lower_rear_link)
 
     # Wheel center (on knuckle, between ball joints)
     wheel_center = AttachmentPoint("wheel_center", [1400, 750, 390], unit='mm')
 
-    print(f"Upper arm: {len(upper_arm.links)} links")
-    print(f"Lower arm: {len(lower_arm.links)} links")
+    print(f"Upper arm: {len(upper_arm.attachment_points)} attachment points")
+    print(f"Lower arm: {len(lower_arm.attachment_points)} attachment points")
     print(f"Wheel center: {wheel_center.position} mm")
 
     print("\n--- Building CornerSolver ---")

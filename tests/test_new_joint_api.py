@@ -31,10 +31,15 @@ class TestNewControlArmAPI:
 
         # Create control arm
         upper_arm = ControlArm("upper_control_arm")
+
+        # Add attachment points to control arm
+        upper_arm.add_attachment_point("front_chassis", [1300, 0, 600], unit='mm')
+        upper_arm.add_attachment_point("rear_chassis", [1200, 0, 600], unit='mm')
+        upper_arm.add_attachment_point("ball_joint", [1400, 1400, 580], unit='mm')
+
+        # Create links
         front_link = SuspensionLink([1300, 0, 600], [1400, 1400, 580], "front_link", unit='mm')
         rear_link = SuspensionLink([1200, 0, 600], [1400, 1400, 580], "rear_link", unit='mm')
-        upper_arm.add_link(front_link)
-        upper_arm.add_link(rear_link)
 
         # Get control arm link endpoints (these are the attachment points)
         arm_front = front_link.endpoint1   # Front chassis mount on arm
@@ -107,10 +112,15 @@ class TestNewControlArmAPI:
 
         # Create control arm
         arm = ControlArm("test_arm")
+
+        # Add attachment points to control arm
+        arm.add_attachment_point("front_chassis", [1300, 0, 600], unit='mm')
+        arm.add_attachment_point("rear_chassis", [1200, 0, 600], unit='mm')
+        arm.add_attachment_point("ball_joint", [1400, 1400, 580], unit='mm')
+
+        # Create links
         link1 = SuspensionLink([1300, 0, 600], [1400, 1400, 580], "link1", unit='mm')
         link2 = SuspensionLink([1200, 0, 600], [1400, 1400, 580], "link2", unit='mm')
-        arm.add_link(link1)
-        arm.add_link(link2)
 
         # Define joints with DIFFERENT types - this is the key feature!
         solver.add_joint("ball", [link1.endpoint2, knuckle_pt], JointType.BALL_JOINT)  # Stiff
@@ -138,8 +148,13 @@ class TestNewControlArmAPI:
 
         # Create a simple control arm (e.g., a floating link in space)
         arm = ControlArm("floating_arm")
+
+        # Add attachment points to control arm
+        arm.add_attachment_point("point1", [0, 0, 0], unit='mm')
+        arm.add_attachment_point("point2", [100, 0, 0], unit='mm')
+
+        # Create link
         link = SuspensionLink([0, 0, 0], [100, 0, 0], "link", unit='mm')
-        arm.add_link(link)
 
         # Add without specifying any chassis or knuckle mounts
         solver.add_control_arm(control_arm=arm)
@@ -210,10 +225,15 @@ class TestConstraintGeneration:
         """Test that coincident constraints are auto-generated from joints."""
         solver = CornerSolver("test")
 
-        # Create a control arm with a link
+        # Create a control arm with attachment points
         arm = ControlArm("test_arm")
+
+        # Add attachment points to control arm
+        arm.add_attachment_point("point1", [0, 0, 0], unit='mm')
+        arm.add_attachment_point("point2", [100, 0, 0], unit='mm')
+
+        # Create link
         link = SuspensionLink([0, 0, 0], [100, 0, 0], "link", unit='mm')  # Non-zero length
-        arm.add_link(link)
 
         # Create separate point to connect to
         point1 = link.endpoint1
@@ -241,8 +261,13 @@ class TestConstraintGeneration:
 
         # Create control arm
         arm = ControlArm("arm")
+
+        # Add attachment points to control arm
+        arm.add_attachment_point("point1", [0, 0, 0], unit='mm')
+        arm.add_attachment_point("point2", [100, 0, 0], unit='mm')
+
+        # Create link
         link = SuspensionLink([0, 0, 0], [100, 0, 0], "link", unit='mm')
-        arm.add_link(link)
 
         # Use link endpoints
         p1 = link.endpoint1
@@ -275,8 +300,13 @@ class TestAutoInferenceIntegration:
 
         # Create control arm
         arm = ControlArm("arm")
+
+        # Add attachment points to control arm
+        arm.add_attachment_point("chassis_mount", [1300, 0, 600], unit='mm')
+        arm.add_attachment_point("knuckle_mount", [1400, 1400, 580], unit='mm')
+
+        # Create link
         link = SuspensionLink([1300, 0, 600], [1400, 1400, 580], "link", unit='mm')
-        arm.add_link(link)
 
         # Define joints using link endpoints
         solver.add_joint("soft_bush", [link.endpoint1, chassis], JointType.BUSHING_SOFT)

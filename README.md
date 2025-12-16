@@ -115,12 +115,15 @@ from pysuspension.joint_types import JointType
 
 solver = CornerSolver("front_left")
 
-# Create control arm
+# Create control arm with attachment points
 upper_arm = ControlArm("upper_control_arm")
+upper_arm.add_attachment_point("front_chassis", [1300, 0, 600], unit='mm')
+upper_arm.add_attachment_point("rear_chassis", [1200, 0, 600], unit='mm')
+upper_arm.add_attachment_point("ball_joint", [1400, 1400, 580], unit='mm')
+
+# Create links for solver (links define geometric constraints)
 front_link = SuspensionLink([1300, 0, 600], [1400, 1400, 580], "front_link", unit='mm')
 rear_link = SuspensionLink([1200, 0, 600], [1400, 1400, 580], "rear_link", unit='mm')
-upper_arm.add_link(front_link)
-upper_arm.add_link(rear_link)
 
 # Create separate knuckle attachment point
 knuckle_upper = AttachmentPoint("knuckle_upper", [1400, 1400, 580], unit='mm')

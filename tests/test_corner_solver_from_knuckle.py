@@ -42,6 +42,13 @@ def setup_double_wishbone_suspension():
 
     # Create upper control arm
     upper_arm = ControlArm("upper_arm")
+
+    # Add attachment points to control arm
+    upper_arm.add_attachment_point("upper_front_chassis", [1400, 0, 600], unit='mm')
+    upper_arm.add_attachment_point("upper_rear_chassis", [1200, 0, 600], unit='mm')
+    upper_arm.add_attachment_point("upper_ball_joint", [1400, 650, 580], unit='mm')
+
+    # Create links connecting the attachment points
     upper_front_link = SuspensionLink(
         endpoint1=[1400, 0, 600],     # Will connect to chassis
         endpoint2=[1400, 650, 580],   # Ball joint
@@ -54,11 +61,16 @@ def setup_double_wishbone_suspension():
         name="upper_rear",
         unit='mm'
     )
-    upper_arm.add_link(upper_front_link)
-    upper_arm.add_link(upper_rear_link)
 
     # Create lower control arm
     lower_arm = ControlArm("lower_arm")
+
+    # Add attachment points to control arm
+    lower_arm.add_attachment_point("lower_front_chassis", [1500, 0, 300], unit='mm')
+    lower_arm.add_attachment_point("lower_rear_chassis", [1100, 0, 300], unit='mm')
+    lower_arm.add_attachment_point("lower_ball_joint", [1400, 700, 200], unit='mm')
+
+    # Create links connecting the attachment points
     lower_front_link = SuspensionLink(
         endpoint1=[1500, 0, 300],     # Will connect to chassis
         endpoint2=[1400, 700, 200],   # Ball joint
@@ -71,8 +83,6 @@ def setup_double_wishbone_suspension():
         name="lower_rear",
         unit='mm'
     )
-    lower_arm.add_link(lower_front_link)
-    lower_arm.add_link(lower_rear_link)
 
     # Create suspension knuckle
     knuckle = SuspensionKnuckle(
@@ -200,7 +210,7 @@ def test_component_copying():
     for orig_arm, copy_arm in zip(graph.control_arms, copied_graph.control_arms):
         assert copy_arm is not orig_arm, "Control arms should be different objects"
         assert copy_arm.name == orig_arm.name, "Control arm names should match"
-        assert len(copy_arm.links) == len(orig_arm.links), "Same number of links"
+        assert len(copy_arm.attachment_points) == len(orig_arm.attachment_points), "Same number of attachment points"
 
     # Check joints are reconstructed
     assert len(copied_graph.joints) == len(graph.joints), "Same number of joints"
@@ -365,14 +375,12 @@ def test_update_original_from_solved():
     solved_tire_center = solver.copied_knuckle.tire_center.copy()
     print(f"Solved tire center: {solved_tire_center} mm")
 
-    # Debug: Check if control arm endpoints moved
-    print(f"\nControl arm endpoint positions after solving:")
+    # Debug: Check if control arm attachment points moved
+    print(f"\nControl arm attachment point positions after solving:")
     for arm in solver.control_arms:
-        for link in arm.links:
-            ep1_pos = result.get_position(link.endpoint1.name)
-            ep2_pos = result.get_position(link.endpoint2.name)
-            print(f"  {arm.name}.{link.name}.endpoint1: {ep1_pos}")
-            print(f"  {arm.name}.{link.name}.endpoint2: {ep2_pos}")
+        for ap_name, ap in arm.attachment_points.items():
+            ap_pos = result.get_position(ap.name)
+            print(f"  {arm.name}.{ap_name}: {ap_pos}")
 
     # Debug: Check knuckle point positions in solver state
     print(f"\nKnuckle point positions in solver state:")
