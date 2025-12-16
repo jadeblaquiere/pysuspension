@@ -406,13 +406,9 @@ def create_working_copies(graph: SuspensionGraph) -> tuple[SuspensionGraph, Dict
         steering_racks_copy.append(rack_copy)
         mapping[id(rack)] = rack_copy
 
-        # Map steering rack points
-        mapping[id(rack.left_inner_pivot)] = rack_copy.left_inner_pivot
-        mapping[id(rack.right_inner_pivot)] = rack_copy.right_inner_pivot
-
-        # Map housing attachment points
-        for orig_ap, copy_ap in zip(rack.housing.get_all_attachment_points(),
-                                     rack_copy.housing.get_all_attachment_points()):
+        # Map all attachment points (housing + inner pivots)
+        # SteeringRack now inherits from RigidBody with all attachment points in self.attachment_points
+        for orig_ap, copy_ap in zip(rack.attachment_points, rack_copy.attachment_points):
             mapping[id(orig_ap)] = copy_ap
 
     # Copy chassis attachment points (these are just references, not new objects)
