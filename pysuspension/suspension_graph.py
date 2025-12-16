@@ -31,8 +31,8 @@ class SuspensionGraph:
 
     Attributes:
         knuckle: The starting SuspensionKnuckle
-        control_arms: List of discovered ControlArm components
-        links: List of discovered SuspensionLink components (excluding CoilSpring)
+        control_arms: List of discovered ControlArm components (RigidBody with attachment points)
+        links: List of discovered standalone SuspensionLink components (excluding CoilSpring)
         coil_springs: List of discovered CoilSpring components
         steering_racks: List of discovered SteeringRack components
         joints: Dict of discovered SuspensionJoint objects (name -> joint)
@@ -165,20 +165,6 @@ def discover_suspension_graph(knuckle: 'SuspensionKnuckle') -> SuspensionGraph:
                         visited_components.add(component_id)
 
                         # Add all attachment points from this control arm to queue
-                        # Iterate over all links in the control arm
-                        for link in parent.links:
-                            if id(link.endpoint1) not in visited_points:
-                                queue.append(link.endpoint1)
-                                graph.all_attachment_points.append(link.endpoint1)
-                                graph.component_map[id(link.endpoint1)] = parent
-                                visited_points.add(id(link.endpoint1))
-                            if id(link.endpoint2) not in visited_points:
-                                queue.append(link.endpoint2)
-                                graph.all_attachment_points.append(link.endpoint2)
-                                graph.component_map[id(link.endpoint2)] = parent
-                                visited_points.add(id(link.endpoint2))
-
-                        # Also check additional attachment points
                         for ap in parent.attachment_points:
                             if id(ap) not in visited_points:
                                 queue.append(ap)
@@ -368,16 +354,7 @@ def create_working_copies(graph: SuspensionGraph) -> tuple[SuspensionGraph, Dict
         mapping[id(control_arm)] = arm_copy
 
         # Map all attachment points in this control arm
-        # Need to match original points to copied points
         # The copy() method creates new attachment points, need to map them
-
-        # Map link endpoints
-        for orig_link, copy_link in zip(control_arm.links, arm_copy.links):
-            mapping[id(orig_link)] = copy_link
-            mapping[id(orig_link.endpoint1)] = copy_link.endpoint1
-            mapping[id(orig_link.endpoint2)] = copy_link.endpoint2
-
-        # Map additional attachment points
         for orig_ap, copy_ap in zip(control_arm.attachment_points, arm_copy.attachment_points):
             mapping[id(orig_ap)] = copy_ap
 
