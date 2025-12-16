@@ -449,11 +449,7 @@ class Chassis(RigidBody):
                 return comp_name
             if hasattr(component, 'endpoint2') and component.endpoint2 is point:
                 return comp_name
-            # Check SteeringRack housing attachment points
-            if hasattr(component, 'housing'):
-                for ap in component.housing.attachment_points:
-                    if ap is point:
-                        return component.housing.name
+            # Check SteeringRack inner pivots (housing points handled by attachment_points check above)
             if hasattr(component, 'left_inner_pivot') and component.left_inner_pivot is point:
                 return comp_name
             if hasattr(component, 'right_inner_pivot') and component.right_inner_pivot is point:
@@ -570,10 +566,7 @@ class Chassis(RigidBody):
             if hasattr(component, 'endpoint2'):
                 lookup[f"{comp_name}.{component.endpoint2.name}"] = component.endpoint2
 
-            # Handle SteeringRack housing attachment points
-            if hasattr(component, 'housing'):
-                for ap in component.housing.attachment_points:
-                    lookup[f"{component.housing.name}.{ap.name}"] = ap
+            # Handle SteeringRack inner pivots (housing points handled by attachment_points above)
             if hasattr(component, 'left_inner_pivot'):
                 lookup[f"{component.name}.{component.left_inner_pivot.name}"] = component.left_inner_pivot
             if hasattr(component, 'right_inner_pivot'):
