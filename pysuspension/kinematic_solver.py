@@ -138,7 +138,9 @@ class KinematicSolver:
 
         # Solver settings
         self.max_iterations = 1000
-        self.tolerance = 1e-9
+        # Relaxed tolerances for systems with compliant joints
+        # With mm units and bushing compliance, 1e-6 is reasonable (0.001mm error)
+        self.tolerance = 1e-6
         self.method = 'least-squares'
 
         # Last solve result
@@ -254,6 +256,9 @@ class KinematicSolver:
             for chassis_point in graph.chassis_points:
                 if chassis_point not in solver.registry.chassis_points:
                     solver.registry.chassis_points.append(chassis_point)
+                # Also add to all_attachment_points if not already present
+                if chassis_point not in solver.registry.all_attachment_points:
+                    solver.registry.all_attachment_points.append(chassis_point)
 
         # Initialize solver state with all attachment points
         for ap in solver.registry.all_attachment_points:
@@ -507,42 +512,48 @@ class KinematicSolver:
                     )
                     constraints.append(constraint)
 
-        # 5. Chassis mount points: Fixed in space
-        for i, chassis_point in enumerate(self.registry.chassis_points):
-            # Create fixed point constraint at current position
-            constraint = FixedPointConstraint(
-                chassis_point,
-                chassis_point.position.copy(),
-                name=f"chassis_mount_{chassis_point.name}",
-                joint_type=JointType.RIGID
-            )
-            constraints.append(constraint)
+        # 5. Chassis mount points: Already fixed in SolverState
+        # No constraints needed - they don't participate in optimization
 
         return constraints
 
-    def _update_component_positions(self, solution_vector: np.ndarray):
+    def _update_component_positions(self,
+                                    solution_vector: np.ndarray,
+                                    rigid_body_initial_positions: Dict[str, List[np.ndarray]]):
         """
         Update all component positions from the solved state.
 
         This propagates the optimized attachment point positions back to
-        the component objects using their fit_to_attachment_targets() methods.
+        the component objects (e.g., updating knuckle tire_center to follow
+        attachment point movement).
 
         Args:
             solution_vector: Optimized position vector from solver
+            rigid_body_initial_positions: Dict of initial attachment point positions
+                                         for each rigid body (before optimization)
         """
-        # Ensure state is updated
+        # Update state with solution (this updates attachment points to final positions)
         self.state.from_vector(solution_vector)
 
         # Update RigidBody components (knuckles, control arms, steering racks)
         for name, rigid_body in self.registry.rigid_bodies.items():
-            # Get target positions for all attachment points
-            target_positions = [
-                ap.position.copy() for ap in rigid_body.attachment_points
-            ]
+            # Compute centroid movement to update rigid body position
+            original_positions = np.array(rigid_body_initial_positions[name])
+            new_positions = np.array([ap.position for ap in rigid_body.attachment_points])
 
-            # Update rigid body to best fit target positions
-            # This uses SVD-based Kabsch algorithm for optimal rigid transformation
-            rigid_body.fit_to_attachment_targets(target_positions, unit='mm')
+            # Compute centroids
+            original_centroid = np.mean(original_positions, axis=0)
+            new_centroid = np.mean(new_positions, axis=0)
+            translation = new_centroid - original_centroid
+
+            # For SuspensionKnuckle, update tire_center
+            from .suspension_knuckle import SuspensionKnuckle
+            if isinstance(rigid_body, SuspensionKnuckle):
+                rigid_body.tire_center += translation
+
+            # Update center of mass
+            if rigid_body.center_of_mass is not None:
+                rigid_body.center_of_mass += translation
 
         # Update SuspensionLink components (fixed length)
         for name, link in self.registry.links.items():
@@ -654,6 +665,14 @@ class KinematicSolver:
         # Get initial guess from current state
         x0 = self.state.to_vector()
 
+        # Save initial rigid body attachment point positions before optimization
+        # This is needed to compute how much rigid bodies moved after solving
+        rigid_body_initial_positions = {}
+        for name, rigid_body in self.registry.rigid_bodies.items():
+            rigid_body_initial_positions[name] = [
+                ap.position.copy() for ap in rigid_body.attachment_points
+            ]
+
         if len(x0) == 0:
             # No free variables - system is fully constrained
             return SolverResult(
@@ -696,7 +715,7 @@ class KinematicSolver:
         self.state.from_vector(result.x)
 
         # Update component positions from solved state
-        self._update_component_positions(result.x)
+        self._update_component_positions(result.x, rigid_body_initial_positions)
 
         # Build solver result
         solver_result = SolverResult(
