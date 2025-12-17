@@ -740,8 +740,96 @@ class KinematicSolver:
             >>> result = solver.solve_for_heave('front_left_knuckle', -50, unit='mm')
             >>> print(f"Spring force: {solver.get_spring_force('spring'):.1f} N")
         """
-        # Implementation will be in Step 6
-        raise NotImplementedError("solve_for_heave() will be implemented in Step 6")
+        from .units import to_mm
+
+        # Get the knuckle
+        knuckle = self.get_knuckle(knuckle_name)
+
+        # Get tire contact patch position
+        contact_patch = knuckle.get_tire_contact_patch(unit='mm')
+
+        # Calculate target Z position
+        displacement_mm = to_mm(displacement, unit)
+        target_z = contact_patch[2] + displacement_mm
+
+        # Create target position (only Z changes)
+        target_position = contact_patch.copy()
+        target_position[2] = target_z
+
+        # Use first attachment point on knuckle as reference
+        # The solver will move the entire knuckle (rigid body) to achieve this
+        if not knuckle.attachment_points:
+            raise ValueError(f"Knuckle '{knuckle_name}' has no attachment points")
+
+        reference_point = knuckle.attachment_points[0]
+        current_pos = reference_point.position.copy()
+
+        # Calculate how much to move the reference point
+        delta_z = displacement_mm
+        target_ref_position = current_pos.copy()
+        target_ref_position[2] += delta_z
+
+        # Create constraint - only constrain Z axis
+        constraint = PartialPositionConstraint(
+            reference_point,
+            target_ref_position,
+            axes=[False, False, True],  # Only constrain Z
+            name=f"{knuckle_name}_heave",
+            joint_type=JointType.RIGID
+        )
+
+        # Solve with this target
+        return self.solve_for_target(knuckle_name, constraint)
+
+    def solve_for_wheel_position(self,
+                                 knuckle_name: str,
+                                 position: Union[np.ndarray, List[float]],
+                                 unit: str = 'mm') -> SolverResult:
+        """
+        Solve for a specific wheel center position.
+
+        Convenience method that creates a full position constraint
+        on a knuckle attachment point to move the wheel.
+
+        Args:
+            knuckle_name: Name of the knuckle to move
+            position: Target 3D position [x, y, z] for attachment point
+            unit: Unit of position (default: 'mm')
+
+        Returns:
+            SolverResult with convergence info and final positions
+
+        Example:
+            >>> # Move wheel to specific position
+            >>> result = solver.solve_for_wheel_position('front_left_knuckle',
+            ...                                           [1400, 750, 300], unit='mm')
+        """
+        from .units import to_mm
+
+        # Get the knuckle
+        knuckle = self.get_knuckle(knuckle_name)
+
+        if not knuckle.attachment_points:
+            raise ValueError(f"Knuckle '{knuckle_name}' has no attachment points")
+
+        # Convert position to mm
+        position_array = np.array(position) if isinstance(position, list) else position
+        target_position = np.array([to_mm(p, unit) for p in position_array])
+
+        # Use first attachment point as reference
+        reference_point = knuckle.attachment_points[0]
+
+        # Create full position constraint
+        constraint = PartialPositionConstraint(
+            reference_point,
+            target_position,
+            axes=[True, True, True],  # Constrain all axes
+            name=f"{knuckle_name}_wheel_position",
+            joint_type=JointType.RIGID
+        )
+
+        # Solve with this target
+        return self.solve_for_target(knuckle_name, constraint)
 
     def compute_total_error(self) -> float:
         """
