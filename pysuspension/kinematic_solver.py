@@ -18,7 +18,7 @@ Requirements:
 """
 
 import numpy as np
-from typing import List, Dict, Optional, Set, TYPE_CHECKING
+from typing import List, Dict, Optional, Set, Union, TYPE_CHECKING
 from dataclasses import dataclass, field
 
 try:
@@ -773,7 +773,7 @@ class KinematicSolver:
         constraint = PartialPositionConstraint(
             reference_point,
             target_ref_position,
-            axes=[False, False, True],  # Only constrain Z
+            constrain_axes=['z'],  # Only constrain Z
             name=f"{knuckle_name}_heave",
             joint_type=JointType.RIGID
         )
@@ -823,7 +823,7 @@ class KinematicSolver:
         constraint = PartialPositionConstraint(
             reference_point,
             target_position,
-            axes=[True, True, True],  # Constrain all axes
+            constrain_axes=['x', 'y', 'z'],  # Constrain all axes
             name=f"{knuckle_name}_wheel_position",
             joint_type=JointType.RIGID
         )
