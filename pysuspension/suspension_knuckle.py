@@ -279,6 +279,30 @@ class SuspensionKnuckle(RigidBody):
 
         return rms_error
 
+    def _apply_transformation(self, R: np.ndarray, t: np.ndarray) -> None:
+        """
+        Apply rigid body transformation to knuckle, including tire_center.
+
+        Overrides RigidBody._apply_transformation to also transform knuckle-specific
+        properties like tire_center.
+
+        Args:
+            R: 3x3 rotation matrix
+            t: 3D translation vector (in mm)
+        """
+        # Transform tire center
+        self.tire_center = R @ self.tire_center + t
+
+        # Call parent to transform attachment points and center_of_mass
+        super()._apply_transformation(R, t)
+
+        # Extract toe and camber angles from combined rotation matrix
+        # After transformation, rotation_matrix = R_new @ R_old
+        # For small angles, extract them from the matrix
+        self.camber_angle = np.arcsin(np.clip(self.rotation_matrix[1, 2], -1, 1))
+        self.toe_angle = np.arctan2(self.rotation_matrix[1, 0],
+                                     np.sqrt(self.rotation_matrix[1, 1]**2 + self.rotation_matrix[1, 2]**2))
+
     def reset_to_origin(self) -> None:
         """
         Reset the knuckle to its originally defined position and orientation.
