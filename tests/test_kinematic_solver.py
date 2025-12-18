@@ -21,6 +21,8 @@ from pysuspension.suspension_joint import SuspensionJoint
 from pysuspension.attachment_point import AttachmentPoint
 from pysuspension.joint_types import JointType
 
+from pysuspension.constraints import CoincidentPointConstraint
+
 
 def setup_simple_suspension():
     """
@@ -47,6 +49,7 @@ def setup_simple_suspension():
     ur_chassis = corner.add_attachment_point("upper_rear", [1200, 0, 600], unit='mm')
     lf_chassis = corner.add_attachment_point("lower_front", [1500, 0, 300], unit='mm')
     lr_chassis = corner.add_attachment_point("lower_rear", [1100, 0, 300], unit='mm')
+    tr_chassis = corner.add_attachment_point("chassis tr", [1150, 0, 400], unit='mm')
     chassis.add_corner(corner)
 
     # Create suspension knuckle with attachment points
@@ -99,18 +102,22 @@ def setup_simple_suspension():
         unit='mm'
     )
 
-    # Create joints connecting components
-    # Note: Using BALL_JOINT for all connections creates a more realistic
-    # stiff suspension model. The compliance comes from the optimization process
-    # allowing small violations when geometrically necessary.
+    # Tie rod link: chassis -> outer TR joint
+    tie_rod_link = SuspensionLink(
+        endpoint1=[1150, 0, 400],        # Chassis end
+        endpoint2=[1400, 650, 390],      # Outer TR joint end (same location)
+        name="tr_outer",
+        unit='mm'
+    )
 
-    # Upper front joint: chassis to link
-    uf_bushing = SuspensionJoint("uf_bushing", JointType.BALL_JOINT)
+    # Create joints connecting components
+    # Upper front bushing: chassis to link (compliant)
+    uf_bushing = SuspensionJoint("uf_bushing", JointType.SPHERICAL_BEARING)
     uf_bushing.add_attachment_point(uf_chassis)
     uf_bushing.add_attachment_point(upper_front_link.endpoint1)
 
-    # Upper rear joint: chassis to link
-    ur_bushing = SuspensionJoint("ur_bushing", JointType.BALL_JOINT)
+    # Upper rear bushing: chassis to link (compliant)
+    ur_bushing = SuspensionJoint("ur_bushing", JointType.SPHERICAL_BEARING)
     ur_bushing.add_attachment_point(ur_chassis)
     ur_bushing.add_attachment_point(upper_rear_link.endpoint1)
 
@@ -120,13 +127,13 @@ def setup_simple_suspension():
     upper_ball_joint.add_attachment_point(upper_rear_link.endpoint2)
     upper_ball_joint.add_attachment_point(upper_ball)
 
-    # Lower front joint: chassis to link
-    lf_bushing = SuspensionJoint("lf_bushing", JointType.BALL_JOINT)
+    # Lower front bushing: chassis to link (compliant)
+    lf_bushing = SuspensionJoint("lf_bushing", JointType.SPHERICAL_BEARING)
     lf_bushing.add_attachment_point(lf_chassis)
     lf_bushing.add_attachment_point(lower_front_link.endpoint1)
 
-    # Lower rear joint: chassis to link
-    lr_bushing = SuspensionJoint("lr_bushing", JointType.BALL_JOINT)
+    # Lower rear bushing: chassis to link (compliant)
+    lr_bushing = SuspensionJoint("lr_bushing", JointType.SPHERICAL_BEARING)
     lr_bushing.add_attachment_point(lr_chassis)
     lr_bushing.add_attachment_point(lower_rear_link.endpoint1)
 
@@ -136,19 +143,37 @@ def setup_simple_suspension():
     lower_ball_joint.add_attachment_point(lower_rear_link.endpoint2)
     lower_ball_joint.add_attachment_point(lower_ball)
 
+    # TR outer joint: TR link + knuckle (rigid)
+    outer_tr_joint = SuspensionJoint("outer tie rod ball", JointType.BALL_JOINT)
+    outer_tr_joint.add_attachment_point(tie_rod_link.endpoint2)
+    outer_tr_joint.add_attachment_point(tie_rod_knuckle)
+
+    # TR inner joint: both lower links + knuckle (rigid)
+    inner_tr_joint = SuspensionJoint("inner tie rod ball", JointType.BALL_JOINT)
+    inner_tr_joint.add_attachment_point(tie_rod_link.endpoint1)
+    inner_tr_joint.add_attachment_point(tr_chassis)
+
     # Register all components with chassis
     chassis.add_component(knuckle)
+    chassis.add_component(upper_front_link)
+    chassis.add_component(upper_rear_link)
+    chassis.add_component(lower_front_link)
+    chassis.add_component(lower_rear_link)
+    chassis.add_component(tie_rod_link)
+
     chassis.add_joint(uf_bushing)
     chassis.add_joint(ur_bushing)
     chassis.add_joint(upper_ball_joint)
     chassis.add_joint(lf_bushing)
     chassis.add_joint(lr_bushing)
     chassis.add_joint(lower_ball_joint)
+    chassis.add_joint(outer_tr_joint)
+    chassis.add_joint(inner_tr_joint)
 
-    print(f"✓ Created chassis with 1 corner and 4 chassis points")
+    print(f"✓ Created chassis with 1 corner and 5 chassis points")
     print(f"✓ Created knuckle with 3 attachment points")
-    print(f"✓ Created 4 links (2 upper, 2 lower)")
-    print(f"✓ Created 6 joints (4 bushings, 2 ball joints)")
+    print(f"✓ Created 5 links (2 upper, 2 lower, 1 tie rod)")
+    print(f"✓ Created 8 joints (4 bushings, 4 ball joints)")
     print(f"✓ Each component owns its attachment points")
     print(f"✓ Joints connect separate points with coincident constraints")
 
@@ -255,6 +280,15 @@ def test_solve_for_heave():
     print(f"Iterations: {result.iterations}")
     print(f"Total error: {result.total_error:.6e}")
     print(f"RMS error: {result.get_rms_error():.6f} mm")
+
+    ces = solver.compute_constraint_errors()
+    for ce_name, ce_error in ces.items():
+        print(f"constraint: {str(ce_name)} -> {float(ce_error)}")
+    for c in solver._active_constraints:
+        print(c)
+        if isinstance(c, CoincidentPointConstraint):
+            print(c.point1.position)
+            print(c.point2.position)
 
     # Check final position
     final_contact_patch = knuckle.get_tire_contact_patch(unit='mm')
