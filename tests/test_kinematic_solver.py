@@ -281,9 +281,9 @@ def test_solve_for_heave():
     print(f"Total error: {result.total_error:.6e}")
     print(f"RMS error: {result.get_rms_error():.6f} mm")
 
-    #ces = solver.compute_constraint_errors()
-    #for ce_name, ce_error in ces.items():
-    #    print(f"constraint: {str(ce_name)} -> {float(ce_error)}")
+    ces = solver.compute_constraint_errors()
+    for ce_name, ce_error in ces.items():
+        print(f"constraint: {str(ce_name)} -> {float(ce_error)}")
     #for c in solver._active_constraints:
     #    print(c)
     #    if isinstance(c, CoincidentPointConstraint):
