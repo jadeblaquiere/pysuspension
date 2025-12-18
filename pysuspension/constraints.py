@@ -333,8 +333,8 @@ class FixedPointConstraint(GeometricConstraint):
         Returns:
             Sum of squared position errors in all 3 dimensions
         """
-        error = self.point.position - self.target_position
-        return np.sum(error ** 2)
+        error = np.linalg.norm(self.point.position - self.target_position)
+        return error ** 2
 
     def get_displacement(self) -> np.ndarray:
         """
@@ -418,8 +418,8 @@ class CoincidentPointConstraint(GeometricConstraint):
         Returns:
             Sum of squared position errors in all 3 dimensions
         """
-        error = self.point1.position - self.point2.position
-        return np.sum(error ** 2)
+        error = np.linalg.norm(self.point1.position - self.point2.position)
+        return error ** 2
 
     def get_separation(self) -> float:
         """
