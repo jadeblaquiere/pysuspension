@@ -3,14 +3,17 @@
 Comprehensive test for reset_to_origin() functionality across all suspension classes.
 """
 import sys
+import os
 import numpy as np
-sys.path.insert(0, 'pysuspension')
 
-from suspension_knuckle import SuspensionKnuckle
-from control_arm import ControlArm
-from chassis import Chassis
-from chassis_corner import ChassisCorner
-from chassis_axle import ChassisAxle
+# Add parent directory to path for pysuspension imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from pysuspension.suspension_knuckle import SuspensionKnuckle
+from pysuspension.control_arm import ControlArm
+from pysuspension.chassis import Chassis
+from pysuspension.chassis_corner import ChassisCorner
+from pysuspension.chassis_axle import ChassisAxle
 
 def test_suspension_knuckle_reset():
     """Test SuspensionKnuckle reset_to_origin()"""
@@ -284,6 +287,81 @@ def test_chassis_hierarchical_reset():
     print("\n✓ Chassis hierarchical reset test PASSED")
     return True
 
+def test_chassis_reset_all_to_origin():
+    """Test Chassis reset_all_to_origin() with registered components"""
+    print("\n" + "="*60)
+    print("TEST: Chassis reset_all_to_origin() with components")
+    print("="*60)
+
+    # Create chassis
+    chassis = Chassis(mass=500, mass_unit='kg')
+
+    # Create and register suspension components FIRST (before corners)
+    # This way we can capture original state independent of chassis
+    upper_arm = ControlArm(name="upper_arm_fl", mass=2.5, mass_unit='kg')
+    upper_arm.add_attachment_point("front_chassis", [1300, 700, 600], unit='mm')
+    upper_arm.add_attachment_point("rear_chassis", [1200, 700, 600], unit='mm')
+    upper_arm.add_attachment_point("ball_joint", [1400, 750, 650], unit='mm')
+    chassis.add_component(upper_arm)
+
+    lower_arm = ControlArm(name="lower_arm_fl", mass=3.0, mass_unit='kg')
+    lower_arm.add_attachment_point("front_chassis", [1350, 650, 400], unit='mm')
+    lower_arm.add_attachment_point("rear_chassis", [1250, 650, 400], unit='mm')
+    lower_arm.add_attachment_point("ball_joint", [1400, 750, 450], unit='mm')
+    chassis.add_component(lower_arm)
+
+    # Store original component values BEFORE any transformations
+    original_upper_positions = [pos.copy() for pos in upper_arm.get_all_attachment_positions(unit='mm')]
+    original_upper_centroid = upper_arm.centroid.copy()
+    original_lower_positions = [pos.copy() for pos in lower_arm.get_all_attachment_positions(unit='mm')]
+    original_lower_centroid = lower_arm.centroid.copy()
+
+    print(f"Original upper arm centroid (mm): {original_upper_centroid}")
+    print(f"Original lower arm centroid (mm): {original_lower_centroid}")
+    print(f"Original upper arm positions: {original_upper_positions}")
+    print(f"Original lower arm positions: {original_lower_positions}")
+
+    # Apply transformations to components
+    upper_arm.translate([30, -15, 10], unit='mm')
+    lower_arm.translate([25, -10, 15], unit='mm')
+
+    print(f"\nAfter transformations:")
+    print(f"  Upper arm centroid (mm): {upper_arm.centroid}")
+    print(f"  Lower arm centroid (mm): {lower_arm.centroid}")
+
+    # Verify transformations were applied
+    assert not np.allclose(upper_arm.centroid, original_upper_centroid, atol=1e-6), \
+        "Upper arm should have been transformed!"
+    assert not np.allclose(lower_arm.centroid, original_lower_centroid, atol=1e-6), \
+        "Lower arm should have been transformed!"
+
+    # Reset all using reset_all_to_origin()
+    chassis.reset_all_to_origin()
+
+    print(f"\nAfter chassis.reset_all_to_origin():")
+    print(f"  Upper arm centroid (mm): {upper_arm.centroid}")
+    print(f"  Lower arm centroid (mm): {lower_arm.centroid}")
+
+    # Verify upper arm component reset
+    assert np.allclose(upper_arm.centroid, original_upper_centroid, atol=1e-6), \
+        f"Upper arm centroid not reset! Expected {original_upper_centroid}, got {upper_arm.centroid}"
+    reset_upper_positions = upper_arm.get_all_attachment_positions(unit='mm')
+    for i, (orig, reset) in enumerate(zip(original_upper_positions, reset_upper_positions)):
+        assert np.allclose(reset, orig, atol=1e-6), \
+            f"Upper arm position {i} not reset! Expected {orig}, got {reset}"
+
+    # Verify lower arm component reset
+    assert np.allclose(lower_arm.centroid, original_lower_centroid, atol=1e-6), \
+        f"Lower arm centroid not reset! Expected {original_lower_centroid}, got {lower_arm.centroid}"
+    reset_lower_positions = lower_arm.get_all_attachment_positions(unit='mm')
+    for i, (orig, reset) in enumerate(zip(original_lower_positions, reset_lower_positions)):
+        assert np.allclose(reset, orig, atol=1e-6), \
+            f"Lower arm position {i} not reset! Expected {orig}, got {reset}"
+
+    print("\n✓ Chassis reset_all_to_origin() test PASSED")
+    print("  - All registered components were successfully reset")
+    return True
+
 def main():
     """Run all reset tests"""
     print("\n" + "="*60)
@@ -297,6 +375,7 @@ def main():
         ("ChassisCorner", test_chassis_corner_reset),
         ("ChassisAxle", test_chassis_axle_reset),
         ("Chassis hierarchical", test_chassis_hierarchical_reset),
+        ("Chassis reset_all_to_origin", test_chassis_reset_all_to_origin),
     ]
 
     for test_name, test_func in tests:
