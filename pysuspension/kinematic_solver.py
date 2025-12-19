@@ -555,8 +555,9 @@ class KinematicSolver:
         Update all component positions from the solved state.
 
         This propagates the optimized attachment point positions back to
-        the component objects (e.g., updating knuckle tire_center to follow
-        attachment point movement).
+        the component objects using rigid body transformations (rotation + translation)
+        computed via the Kabsch algorithm. This ensures that all component properties
+        (tire_center, rotation_matrix, toe/camber angles, etc.) are correctly updated.
 
         Args:
             solution_vector: Optimized position vector from solver
@@ -567,24 +568,19 @@ class KinematicSolver:
         self.state.from_vector(solution_vector)
 
         # Update RigidBody components (knuckles, control arms, steering racks)
+        # Compute rotation + translation using Kabsch algorithm
         for name, rigid_body in self.registry.rigid_bodies.items():
-            # Compute centroid movement to update rigid body position
+            # Get original and solved positions
             original_positions = np.array(rigid_body_initial_positions[name])
-            new_positions = np.array([ap.position for ap in rigid_body.attachment_points])
+            solved_positions = np.array([ap.position for ap in rigid_body.attachment_points])
 
-            # Compute centroids
-            original_centroid = np.mean(original_positions, axis=0)
-            new_centroid = np.mean(new_positions, axis=0)
-            translation = new_centroid - original_centroid
+            # Compute transformation from original to solved using Kabsch algorithm
+            R, t = self._compute_kabsch_transformation(original_positions, solved_positions,
+                                                       rigid_body.attachment_points)
 
-            # For SuspensionKnuckle, update tire_center
-            from .suspension_knuckle import SuspensionKnuckle
-            if isinstance(rigid_body, SuspensionKnuckle):
-                rigid_body.tire_center += translation
-
-            # Update center of mass
-            if rigid_body.center_of_mass is not None:
-                rigid_body.center_of_mass += translation
+            # Apply transformation to rigid body properties (not attachment points)
+            # Attachment points are already at solved positions from state.from_vector()
+            self._apply_rigid_body_transformation(rigid_body, R, t)
 
         # Update SuspensionLink components (fixed length)
         for name, link in self.registry.links.items():
@@ -604,6 +600,105 @@ class KinematicSolver:
             ]
             spring.fit_to_attachment_targets(target_positions, unit='mm')
             # Spring force is automatically recalculated by fit_to_attachment_targets
+
+    def _compute_kabsch_transformation(self,
+                                      original_positions: np.ndarray,
+                                      solved_positions: np.ndarray,
+                                      attachment_points: List[AttachmentPoint]) -> tuple:
+        """
+        Compute optimal rotation and translation using weighted Kabsch algorithm.
+
+        Uses joint stiffness weighting so that stiffer joints (like ball joints) have
+        less error tolerance, while compliant joints (like soft bushings) can absorb
+        more geometric mismatch.
+
+        Args:
+            original_positions: Nx3 array of original attachment point positions
+            solved_positions: Nx3 array of solved attachment point positions
+            attachment_points: List of AttachmentPoint objects for stiffness weighting
+
+        Returns:
+            Tuple of (R, t) where R is 3x3 rotation matrix and t is 3D translation vector
+        """
+        # Get joint stiffness for each attachment point
+        stiffness_weights = []
+        for ap in attachment_points:
+            if ap.joint is not None:
+                stiffness = JOINT_STIFFNESS[ap.joint.joint_type]
+            else:
+                stiffness = JOINT_STIFFNESS[JointType.RIGID]  # Default to rigid if no joint
+            stiffness_weights.append(stiffness)
+        stiffness_weights = np.array(stiffness_weights)
+        total_weight = np.sum(stiffness_weights)
+
+        # Compute weighted centroids
+        centroid_original = np.sum(original_positions * stiffness_weights[:, np.newaxis], axis=0) / total_weight
+        centroid_solved = np.sum(solved_positions * stiffness_weights[:, np.newaxis], axis=0) / total_weight
+
+        # Center the point sets
+        original_centered = original_positions - centroid_original
+        solved_centered = solved_positions - centroid_solved
+
+        # Compute weighted cross-covariance matrix H
+        weighted_original = original_centered * np.sqrt(stiffness_weights[:, np.newaxis])
+        weighted_solved = solved_centered * np.sqrt(stiffness_weights[:, np.newaxis])
+        H = weighted_original.T @ weighted_solved
+
+        # Singular Value Decomposition (Kabsch algorithm)
+        U, S, Vt = np.linalg.svd(H)
+
+        # Compute rotation matrix
+        R = Vt.T @ U.T
+
+        # Ensure proper rotation (det(R) = 1, not -1 for reflection)
+        if np.linalg.det(R) < 0:
+            Vt[-1, :] *= -1
+            R = Vt.T @ U.T
+
+        # Compute translation
+        t = centroid_solved - R @ centroid_original
+
+        return R, t
+
+    def _apply_rigid_body_transformation(self,
+                                        rigid_body: 'RigidBody',
+                                        R: np.ndarray,
+                                        t: np.ndarray) -> None:
+        """
+        Apply transformation to rigid body properties (not attachment points).
+
+        Updates center_of_mass, rotation_matrix, and for SuspensionKnuckle also
+        updates tire_center, toe_angle, and camber_angle.
+
+        Attachment points are NOT updated here - they're already at solved positions.
+
+        Args:
+            rigid_body: RigidBody to update
+            R: 3x3 rotation matrix
+            t: 3D translation vector (in mm)
+        """
+        from .suspension_knuckle import SuspensionKnuckle
+
+        # Update center of mass
+        if rigid_body.center_of_mass is not None:
+            rigid_body.center_of_mass = R @ rigid_body.center_of_mass + t
+
+        # Update rotation matrix
+        rigid_body.rotation_matrix = R @ rigid_body.rotation_matrix
+
+        # For SuspensionKnuckle, update tire_center and orientation angles
+        if isinstance(rigid_body, SuspensionKnuckle):
+            # Transform tire center
+            rigid_body.tire_center = R @ rigid_body.tire_center + t
+
+            # Extract toe and camber angles from combined rotation matrix
+            rigid_body.camber_angle = np.arcsin(np.clip(rigid_body.rotation_matrix[1, 2], -1, 1))
+            rigid_body.toe_angle = np.arctan2(rigid_body.rotation_matrix[1, 0],
+                                             np.sqrt(rigid_body.rotation_matrix[1, 1]**2 +
+                                                    rigid_body.rotation_matrix[1, 2]**2))
+
+        # Update centroid (based on attachment points which are already at solved positions)
+        rigid_body._update_centroid()
 
     def _compute_forces_and_energy(self, result: SolverResult):
         """
