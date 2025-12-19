@@ -58,6 +58,7 @@ from .constraints import (
 # Solvers
 from .solver import SuspensionSolver, SolverResult
 from .corner_solver import CornerSolver
+from .kinematic_solver import KinematicSolver
 from .solver_state import SolverState, DOFSpecification
 
 # Unit conversion utilities
@@ -128,6 +129,7 @@ __all__ = [
     'SuspensionSolver',
     'SolverResult',
     'CornerSolver',
+    'KinematicSolver',
     'SolverState',
     'DOFSpecification',
 

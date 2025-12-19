@@ -41,6 +41,7 @@ from .constraints import (
 from .joint_types import JointType, JOINT_STIFFNESS
 from .attachment_point import AttachmentPoint
 from .suspension_graph import discover_suspension_graph, SuspensionGraph
+from .geometry_utils import calculate_instant_center_from_points
 
 if TYPE_CHECKING:
     from .chassis import Chassis
@@ -116,6 +117,7 @@ class KinematicSolver:
     - Special handling for variable-length springs (no length constraint)
     - Automatic component state updates after solving
     - Component-level force and energy analysis
+    - Instant center calculations for roll and pitch motion
 
     The solver minimizes:
         E = Σ (JOINT_STIFFNESS[joint_type] × error²)
@@ -126,9 +128,16 @@ class KinematicSolver:
         >>> from pysuspension import Chassis, KinematicSolver
         >>> chassis = Chassis(...)  # Load or create chassis
         >>> solver = KinematicSolver.from_chassis(chassis, ['front_left'])
+        >>>
+        >>> # Solve for heave displacement
         >>> result = solver.solve_for_heave('front_left_knuckle', -50, unit='mm')
         >>> print(f"Solved in {result.iterations} iterations")
         >>> print(f"Spring force: {solver.get_spring_force('front_left_spring'):.1f} N")
+        >>>
+        >>> # Calculate instant centers
+        >>> ic_result = solver.calculate_instant_centers('front_left_knuckle')
+        >>> print(f"Roll center: {ic_result['roll_center']} mm")
+        >>> print(f"Pitch center: {ic_result['pitch_center']} mm")
     """
 
     def __init__(self, name: str = "kinematic_solver"):
@@ -895,6 +904,155 @@ class KinematicSolver:
         for constraint in self._active_constraints:
             errors[constraint.name] = constraint.get_physical_error()
         return errors
+
+    def calculate_instant_centers(self,
+                                  knuckle_name: str,
+                                  z_offsets: Optional[List[float]] = None,
+                                  unit: str = 'mm',
+                                  initial_guess: Optional[np.ndarray] = None) -> Dict[str, any]:
+        """
+        Calculate roll and pitch instant centers for a suspension knuckle.
+
+        This method uses constraint-based kinematics to simulate vertical motion
+        (heave) of the suspension. It solves for the wheel center position at each
+        displacement, updates the knuckle position, and uses the knuckle's tire
+        geometry to calculate the proper contact patch position (accounting for
+        camber). The instant centers are found by fitting circles to the projected
+        contact point trajectories.
+
+        The method:
+        1. Validates inputs and gets the knuckle object
+        2. Saves the initial solver and knuckle states
+        3. For each z-offset, solves suspension kinematics using constraints
+        4. Updates knuckle position to match solved wheel center
+        5. Calculates contact patch using knuckle's tire geometry
+        6. Restores initial solver and knuckle states
+        7. Projects contact points onto YZ plane (for roll center)
+        8. Projects contact points onto XZ plane (for pitch center)
+        9. Fits circles to the projected points
+        10. Returns the circle centers as instant centers
+
+        Args:
+            knuckle_name: Name of the knuckle to analyze (e.g., 'front_left_knuckle')
+            z_offsets: List of z-axis displacements from current position (heave)
+                      Default: [0, 5, 10, -5, -10] mm
+            unit: Unit for z_offsets and output positions (default: 'mm')
+            initial_guess: Initial guess for solver (uses current state if None)
+
+        Returns:
+            Dictionary containing:
+                - 'roll_center': [x, y, z] - Roll instant center position
+                - 'pitch_center': [x, y, z] - Pitch instant center position
+                - 'roll_radius': float - Fitted circle radius for roll motion
+                - 'pitch_radius': float - Fitted circle radius for pitch motion
+                - 'contact_points': Nx3 array - Captured tire contact positions
+                - 'wheel_centers': Nx3 array - Wheel center positions at each offset
+                - 'roll_fit_quality': float - Normalized RMS residual for roll fit
+                - 'pitch_fit_quality': float - Normalized RMS residual for pitch fit
+                - 'roll_residuals': float - Absolute RMS residual for roll fit
+                - 'pitch_residuals': float - Absolute RMS residual for pitch fit
+                - 'solve_errors': List[float] - RMS error from solver at each offset
+
+        Raises:
+            KeyError: If knuckle_name not found in registry
+            ValueError: If insufficient z_offsets (need at least 3)
+
+        Example:
+            >>> solver = KinematicSolver.from_chassis(chassis, ['front_left'])
+            >>> result = solver.calculate_instant_centers('front_left_knuckle')
+            >>> print(f"Roll center: {result['roll_center']} mm")
+            >>> print(f"Pitch center: {result['pitch_center']} mm")
+        """
+        from .units import to_mm, from_mm
+
+        # Get the knuckle (raises KeyError if not found)
+        knuckle = self.get_knuckle(knuckle_name)
+
+        # Set default z_offsets
+        if z_offsets is None:
+            z_offsets = [0, 5, 10, -5, -10]  # Default in mm
+
+        # Validate minimum number of offsets
+        if len(z_offsets) < 3:
+            raise ValueError(f"Need at least 3 z_offsets for circle fitting, got {len(z_offsets)}")
+
+        # Convert z_offsets to mm for internal calculations
+        z_offsets_mm = [to_mm(z, unit) for z in z_offsets]
+
+        # Save initial solver state (all attachment point positions)
+        initial_snapshot = self.state.save_snapshot()
+
+        # Save initial knuckle state
+        knuckle.save_state()
+        initial_tire_center = knuckle.tire_center.copy()
+
+        # Collect wheel center and contact patch positions at each z offset
+        wheel_centers = []
+        contact_points = []
+        solve_errors = []
+
+        try:
+            for z_offset in z_offsets_mm:
+                # Reset to initial state
+                self.state.restore_snapshot(initial_snapshot)
+                knuckle.tire_center = initial_tire_center.copy()
+
+                # Solve for this heave position using constraint-based kinematics
+                result = self.solve_for_heave(knuckle_name, z_offset, unit='mm')
+
+                # Check if solve was successful and collect error
+                rms_error = result.get_rms_error()
+                solve_errors.append(rms_error)
+
+                # Get wheel center position from solved knuckle state
+                # (already updated by solve_for_heave via _update_component_positions)
+                wheel_center_pos = knuckle.tire_center.copy()
+                wheel_centers.append(wheel_center_pos)
+
+                # Calculate tire contact patch using knuckle's tire geometry
+                # This accounts for camber, rolling radius, and tire axis orientation
+                contact_point = knuckle.get_tire_contact_patch(unit='mm')
+                contact_points.append(contact_point)
+
+        finally:
+            # Always restore original state
+            self.state.restore_snapshot(initial_snapshot)
+            knuckle.reset_to_origin()
+
+        # Convert to numpy arrays for analysis
+        contact_points = np.array(contact_points)
+        wheel_centers = np.array(wheel_centers)
+
+        # Calculate roll instant center (YZ plane projection)
+        roll_result = calculate_instant_center_from_points(contact_points, 'YZ')
+
+        # Calculate pitch instant center (XZ plane projection)
+        pitch_result = calculate_instant_center_from_points(contact_points, 'XZ')
+
+        # Convert results to requested unit
+        roll_center = from_mm(roll_result['center_3d'], unit)
+        pitch_center = from_mm(pitch_result['center_3d'], unit)
+        roll_radius = from_mm(roll_result['radius'], unit)
+        pitch_radius = from_mm(pitch_result['radius'], unit)
+        roll_residuals = from_mm(roll_result['residuals'], unit)
+        pitch_residuals = from_mm(pitch_result['residuals'], unit)
+        contact_points_output = from_mm(contact_points, unit)
+        wheel_centers_output = from_mm(wheel_centers, unit)
+        solve_errors_output = [from_mm(err, unit) for err in solve_errors]
+
+        return {
+            'roll_center': roll_center,
+            'pitch_center': pitch_center,
+            'roll_radius': roll_radius,
+            'pitch_radius': pitch_radius,
+            'contact_points': contact_points_output,
+            'wheel_centers': wheel_centers_output,
+            'roll_fit_quality': roll_result['fit_quality'],
+            'pitch_fit_quality': pitch_result['fit_quality'],
+            'roll_residuals': roll_residuals,
+            'pitch_residuals': pitch_residuals,
+            'solve_errors': solve_errors_output
+        }
 
     def __repr__(self) -> str:
         return (f"KinematicSolver('{self.name}', "
