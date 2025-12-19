@@ -66,6 +66,12 @@ class SuspensionLink:
 
         # Calculate link properties in local frame
         self._update_local_frame()
+
+        # Store original state for reset
+        self._original_state = {
+            'endpoint1': self.endpoint1.position.copy(),
+            'endpoint2': self.endpoint2.position.copy(),
+        }
     
     def _update_local_frame(self):
         """Update the local coordinate frame of the link."""
@@ -280,7 +286,19 @@ class SuspensionLink:
         new_endpoint1 = self.endpoint2.position + rotation_matrix @ (self.endpoint1.position - self.endpoint2.position)
         self.endpoint1.set_position(new_endpoint1, unit='mm')
         self._update_local_frame()
-    
+
+    def reset_to_origin(self) -> None:
+        """
+        Reset the suspension link to its originally defined position.
+
+        This restores both endpoint positions to their original values, which
+        also restores the link's original orientation and center position.
+        The link length remains constant (as it always does).
+        """
+        self.endpoint1.set_position(self._original_state['endpoint1'], unit='mm')
+        self.endpoint2.set_position(self._original_state['endpoint2'], unit='mm')
+        self._update_local_frame()
+
     def fit_to_attachment_targets(self, target_endpoints: List[Union[np.ndarray, Tuple[float, float, float]]],
                                  unit: str = 'mm') -> float:
         """
