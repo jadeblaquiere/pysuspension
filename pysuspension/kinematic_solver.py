@@ -84,6 +84,22 @@ class ComponentRegistry:
         """Get number of non-chassis attachment points."""
         return len(self.all_attachment_points) - len(self.chassis_points)
 
+    def contains_attachment_point(self, ap: AttachmentPoint,
+                                   point_list: List[AttachmentPoint]) -> bool:
+        """
+        Check if an attachment point is in a list using object identity.
+
+        This avoids numpy array comparison issues when using 'in' operator.
+
+        Args:
+            ap: Attachment point to check
+            point_list: List of attachment points to search
+
+        Returns:
+            True if attachment point is in the list (by identity)
+        """
+        return any(id(ap) == id(p) for p in point_list)
+
 
 class KinematicSolver:
     """
@@ -254,16 +270,18 @@ class KinematicSolver:
 
             # Register chassis points (these are fixed)
             for chassis_point in graph.chassis_points:
-                if chassis_point not in solver.registry.chassis_points:
+                if not solver.registry.contains_attachment_point(chassis_point,
+                                                                  solver.registry.chassis_points):
                     solver.registry.chassis_points.append(chassis_point)
                 # Also add to all_attachment_points if not already present
-                if chassis_point not in solver.registry.all_attachment_points:
+                if not solver.registry.contains_attachment_point(chassis_point,
+                                                                  solver.registry.all_attachment_points):
                     solver.registry.all_attachment_points.append(chassis_point)
 
         # Initialize solver state with all attachment points
         for ap in solver.registry.all_attachment_points:
             # Check if this point is a chassis mount (fixed)
-            if ap in solver.registry.chassis_points:
+            if solver.registry.contains_attachment_point(ap, solver.registry.chassis_points):
                 solver.state.add_fixed_point(ap)
             else:
                 solver.state.add_free_point(ap)
@@ -367,7 +385,8 @@ class KinematicSolver:
             self.registry.rigid_bodies[component.name] = component
             # Register attachment points
             for ap in component.attachment_points:
-                if ap not in self.registry.all_attachment_points:
+                if not self.registry.contains_attachment_point(ap,
+                                                                self.registry.all_attachment_points):
                     self.registry.all_attachment_points.append(ap)
                     self.registry.component_map[id(ap)] = component
 
@@ -376,7 +395,8 @@ class KinematicSolver:
             self.registry.rigid_bodies[component.name] = component
             # Register attachment points
             for ap in component.attachment_points:
-                if ap not in self.registry.all_attachment_points:
+                if not self.registry.contains_attachment_point(ap,
+                                                                self.registry.all_attachment_points):
                     self.registry.all_attachment_points.append(ap)
                     self.registry.component_map[id(ap)] = component
 
@@ -384,7 +404,8 @@ class KinematicSolver:
             self.registry.links[component.name] = component
             # Register endpoints
             for ap in [component.endpoint1, component.endpoint2]:
-                if ap not in self.registry.all_attachment_points:
+                if not self.registry.contains_attachment_point(ap,
+                                                                self.registry.all_attachment_points):
                     self.registry.all_attachment_points.append(ap)
                     self.registry.component_map[id(ap)] = component
 
@@ -392,7 +413,8 @@ class KinematicSolver:
             self.registry.springs[component.name] = component
             # Register endpoints
             for ap in [component.endpoint1, component.endpoint2]:
-                if ap not in self.registry.all_attachment_points:
+                if not self.registry.contains_attachment_point(ap,
+                                                                self.registry.all_attachment_points):
                     self.registry.all_attachment_points.append(ap)
                     self.registry.component_map[id(ap)] = component
 
